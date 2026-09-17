@@ -22,6 +22,8 @@ static int __init wcd9xxx_core_init(void)
 	int ret[NUM_DRIVERS_REG_RET] = {0};
 	int i = 0;
 
+	pr_err("XZS_DEBUG: %s: ENTER\n", __func__);
+
 	ret[0] = msm_cdc_pinctrl_drv_init();
 	if (ret[0])
 		pr_err("%s: Failed init pinctrl drv: %d\n", __func__, ret[0]);

@@ -561,8 +561,12 @@ static int wcd9xxx_device_init(struct wcd9xxx *wcd9xxx)
 					"Failed to register patch: %d\n", ret);
 	}
 
+	pr_err("XZS_DEBUG: %s: about to mfd_add_devices, type=%d, dev=%p, size=%d\n",
+	       __func__, wcd9xxx->type, wcd9xxx->codec_type->dev,
+	       wcd9xxx->codec_type->size);
 	ret = mfd_add_devices(wcd9xxx->dev, -1, wcd9xxx->codec_type->dev,
 			      wcd9xxx->codec_type->size, NULL, 0, NULL);
+	pr_err("XZS_DEBUG: %s: mfd_add_devices returned %d\n", __func__, ret);
 	if (ret != 0) {
 		dev_err(wcd9xxx->dev, "Failed to add children: %d\n", ret);
 		goto err_irq;
@@ -1225,6 +1229,9 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	int ret = 0;
 	int intf_type;
 
+	pr_err("XZS_DEBUG: %s: ENTER, slim dev name=%s\n", __func__,
+	       dev_name(&slim->dev));
+
 	intf_type = wcd9xxx_get_intf_type();
 
 	wcd9xxx = devm_kzalloc(&slim->dev, sizeof(struct wcd9xxx),
@@ -1711,6 +1718,8 @@ int wcd9xxx_init(void)
 			__func__, ret[2]);
 
 	ret[3] = slim_driver_register(&wcd_slim_driver);
+	pr_err("XZS_DEBUG: %s: slim_driver_register returned %d\n",
+	       __func__, ret[3]);
 	if (ret[3])
 		pr_err("%s: Failed to register wcd SB driver: %d\n",
 			__func__, ret[3]);

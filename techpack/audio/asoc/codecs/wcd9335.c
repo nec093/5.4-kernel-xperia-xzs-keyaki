@@ -14319,6 +14319,9 @@ static int tasha_probe(struct platform_device *pdev)
 	struct wcd9xxx_resmgr_v2 *resmgr;
 	struct wcd9xxx_power_region *cdc_pwr;
 
+	pr_err("XZS_DEBUG: %s: ENTER, intf_type=%d\n", __func__,
+	       wcd9xxx_get_intf_type());
+
 	if (wcd9xxx_get_intf_type() == WCD9XXX_INTERFACE_TYPE_I2C) {
 		if (apr_get_subsys_state() == APR_SUBSYS_DOWN) {
 			dev_err(&pdev->dev, "%s: dsp down\n", __func__);
@@ -14383,6 +14386,9 @@ static int tasha_probe(struct platform_device *pdev)
 	/* Register for Clock */
 	wcd_ext_clk = clk_get(tasha->wcd9xxx->dev, "wcd_clk");
 	if (IS_ERR(wcd_ext_clk)) {
+		ret = PTR_ERR(wcd_ext_clk);
+		pr_err("XZS_DEBUG: %s: clk_get(wcd_clk) failed, ret=%d\n",
+		       __func__, ret);
 		dev_err(tasha->wcd9xxx->dev, "%s: clk get %s failed\n",
 			__func__, "wcd_ext_clk");
 		goto err_clk;
@@ -14409,6 +14415,8 @@ static int tasha_probe(struct platform_device *pdev)
 					     ARRAY_SIZE(tasha_i2s_dai));
 	else
 		ret = -EINVAL;
+	pr_err("XZS_DEBUG: %s: snd_soc_register_codec returned %d\n",
+	       __func__, ret);
 	if (ret) {
 		dev_err(&pdev->dev, "%s: Codec registration failed, ret = %d\n",
 			__func__, ret);
@@ -14419,10 +14427,13 @@ static int tasha_probe(struct platform_device *pdev)
 	schedule_work(&tasha->tasha_add_child_devices_work);
 	tasha_get_codec_ver(tasha);
 
+	pr_err("XZS_DEBUG: %s: SUCCESS, returning 0\n", __func__);
 	dev_info(&pdev->dev, "%s: Tasha driver probe done\n", __func__);
 	return ret;
 
 err_cdc_reg:
+	pr_err("XZS_DEBUG: %s: goto err_cdc_reg (final ret will be %d)\n",
+	       __func__, ret);
 	clk_put(tasha->wcd_ext_clk);
 	if (tasha->wcd_native_clk)
 		clk_put(tasha->wcd_native_clk);
@@ -14433,6 +14444,8 @@ err_resmgr:
 err_cdc_pwr:
 	mutex_destroy(&tasha->mclk_lock);
 	devm_kfree(&pdev->dev, tasha);
+	pr_err("XZS_DEBUG: %s: EXIT via error cleanup, final ret=%d\n",
+	       __func__, ret);
 	return ret;
 }
 
