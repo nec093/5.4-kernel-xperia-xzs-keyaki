@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * S390 kdump implementation
  *
@@ -8,7 +9,8 @@
 #include <linux/crash_dump.h>
 #include <asm/lowcore.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/mm.h>
 #include <linux/gfp.h>
 #include <linux/slab.h>
 #include <linux/bootmem.h>
@@ -31,6 +33,7 @@ static struct memblock_type oldmem_type = {
 	.max = 1,
 	.total_size = 0,
 	.regions = &oldmem_region,
+	.name = "oldmem",
 };
 
 struct save_area {
@@ -431,6 +434,20 @@ static void *nt_vmcoreinfo(void *ptr)
 	ptr = nt_init_name(ptr, 0, vmcoreinfo, size, name);
 	kfree(vmcoreinfo);
 	return ptr;
+}
+
+/*
+ * Initialize final note (needed for /proc/vmcore code)
+ */
+static void *nt_final(void *ptr)
+{
+	Elf64_Nhdr *note;
+
+	note = (Elf64_Nhdr *) ptr;
+	note->n_namesz = 0;
+	note->n_descsz = 0;
+	note->n_type = 0;
+	return PTR_ADD(ptr, sizeof(Elf64_Nhdr));
 }
 
 /*

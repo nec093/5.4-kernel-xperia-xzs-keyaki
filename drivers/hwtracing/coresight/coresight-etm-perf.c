@@ -53,14 +53,16 @@ static DEFINE_PER_CPU(struct coresight_device *, csdev_src);
 /* ETMv3.5/PTM's ETMCR is 'config' */
 PMU_FORMAT_ATTR(cycacc,		"config:" __stringify(ETM_OPT_CYCACC));
 PMU_FORMAT_ATTR(timestamp,	"config:" __stringify(ETM_OPT_TS));
+PMU_FORMAT_ATTR(retstack,	"config:" __stringify(ETM_OPT_RETSTK));
 
 static struct attribute *etm_config_formats_attr[] = {
 	&format_attr_cycacc.attr,
 	&format_attr_timestamp.attr,
+	&format_attr_retstack.attr,
 	NULL,
 };
 
-static struct attribute_group etm_pmu_format_group = {
+static const struct attribute_group etm_pmu_format_group = {
 	.name   = "format",
 	.attrs  = etm_config_formats_attr,
 };
@@ -303,7 +305,8 @@ out:
 	return;
 
 fail_end_stop:
-	perf_aux_output_end(handle, 0, true);
+	perf_aux_output_flag(handle, PERF_AUX_FLAG_TRUNCATED);
+	perf_aux_output_end(handle, 0);
 fail:
 	event->hw.state = PERF_HES_STOPPED;
 	goto out;
@@ -311,7 +314,6 @@ fail:
 
 static void etm_event_stop(struct perf_event *event, int mode)
 {
-	bool lost;
 	int cpu = smp_processor_id();
 	unsigned long size;
 	struct coresight_device *sink, *csdev = per_cpu(csdev_src, cpu);
@@ -349,10 +351,9 @@ static void etm_event_stop(struct perf_event *event, int mode)
 			return;
 
 		size = sink_ops(sink)->reset_buffer(sink, handle,
-						    event_data->snk_config,
-						    &lost);
+						    event_data->snk_config);
 
-		perf_aux_output_end(handle, size, lost);
+		perf_aux_output_end(handle, size);
 	}
 
 	/* Disabling the path make its elements available to other sessions */

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_X86_MMU_H
 #define _ASM_X86_MMU_H
 
@@ -14,6 +15,16 @@ typedef struct {
 	 * be reused, and zero is not a valid ctx_id.
 	 */
 	u64 ctx_id;
+
+	/*
+	 * Any code that needs to do any sort of TLB flushing for this
+	 * mm will first make its changes to the page tables, then
+	 * increment tlb_gen, then flush.  This lets the low-level
+	 * flushing code keep track of what needs flushing.
+	 *
+	 * This is not used on Xen PV.
+	 */
+	atomic64_t tlb_gen;
 
 #ifdef CONFIG_MODIFY_LDT_SYSCALL
 	struct ldt_struct *ldt;
@@ -36,6 +47,10 @@ typedef struct {
 	 */
 	u16 pkey_allocation_map;
 	s16 execute_only_pkey;
+#endif
+#ifdef CONFIG_X86_INTEL_MPX
+	/* address of the bounds directory */
+	void __user *bd_addr;
 #endif
 } mm_context_t;
 

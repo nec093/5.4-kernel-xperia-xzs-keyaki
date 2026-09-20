@@ -20,6 +20,9 @@
 #include <linux/err.h>
 #include <linux/vfio.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
+
 #include <asm/iommu.h>
 #include <asm/tce.h>
 #include <asm/mmu_context.h>
@@ -406,7 +409,6 @@ static void tce_iommu_release(void *iommu_data)
 {
 	struct tce_container *container = iommu_data;
 	struct tce_iommu_group *tcegrp;
-	struct tce_iommu_prereg *tcemem, *tmtmp;
 	long i;
 
 	while (tce_groups_attached(container)) {
@@ -429,8 +431,13 @@ static void tce_iommu_release(void *iommu_data)
 		tce_iommu_free_table(container, tbl);
 	}
 
-	list_for_each_entry_safe(tcemem, tmtmp, &container->prereg_list, next)
-		WARN_ON(tce_iommu_prereg_free(container, tcemem));
+	while (!list_empty(&container->prereg_list)) {
+		struct tce_iommu_prereg *tcemem;
+
+		tcemem = list_first_entry(&container->prereg_list,
+				struct tce_iommu_prereg, next);
+		WARN_ON_ONCE(tce_iommu_prereg_free(container, tcemem));
+	}
 
 	tce_iommu_disable(container);
 	if (container->mm)
@@ -678,7 +685,7 @@ static void tce_iommu_free_table(struct tce_container *container,
 	unsigned long pages = tbl->it_allocated_size >> PAGE_SHIFT;
 
 	tce_iommu_userspace_view_free(tbl, container->mm);
-	tbl->it_ops->free(tbl);
+	iommu_tce_table_put(tbl);
 	decrement_locked_vm(container->mm, pages);
 }
 

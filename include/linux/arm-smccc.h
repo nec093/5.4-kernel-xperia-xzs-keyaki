@@ -14,16 +14,14 @@
 #ifndef __LINUX_ARM_SMCCC_H
 #define __LINUX_ARM_SMCCC_H
 
-#include <uapi/linux/const.h>
-
 /*
  * This file provides common defines for ARM SMC Calling Convention as
  * specified in
  * http://infocenter.arm.com/help/topic/com.arm.doc.den0028a/index.html
  */
 
-#define ARM_SMCCC_STD_CALL	        _AC(0,U)
-#define ARM_SMCCC_FAST_CALL	        _AC(1,U)
+#define ARM_SMCCC_STD_CALL		0
+#define ARM_SMCCC_FAST_CALL		1
 #define ARM_SMCCC_TYPE_SHIFT		31
 
 #define ARM_SMCCC_SMC_32		0
@@ -61,29 +59,6 @@
 
 #define ARM_SMCCC_QUIRK_NONE		0
 #define ARM_SMCCC_QUIRK_QCOM_A6		1 /* Save/restore register a6 */
-
-#define ARM_SMCCC_VERSION_1_0		0x10000
-#define ARM_SMCCC_VERSION_1_1		0x10001
-
-#define ARM_SMCCC_VERSION_FUNC_ID					\
-	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
-			   ARM_SMCCC_SMC_32,				\
-			   0, 0)
-
-#define ARM_SMCCC_ARCH_FEATURES_FUNC_ID					\
-	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
-			   ARM_SMCCC_SMC_32,				\
-			   0, 1)
-
-#define ARM_SMCCC_ARCH_WORKAROUND_1					\
-	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
-			   ARM_SMCCC_SMC_32,				\
-			   0, 0x8000)
-
-#define ARM_SMCCC_ARCH_WORKAROUND_2					\
-	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
-			   ARM_SMCCC_SMC_32,				\
-			   0, 0x7fff)
 
 #ifndef __ASSEMBLY__
 

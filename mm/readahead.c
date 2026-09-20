@@ -475,14 +475,8 @@ readit:
 	 * Take care of maximum IO pages as above.
 	 */
 	if (offset == ra->start && ra->size == ra->async_size) {
-		add_pages = get_next_ra_size(ra, max_pages);
-		if (ra->size + add_pages <= max_pages) {
-			ra->async_size = add_pages;
-			ra->size += add_pages;
-		} else {
-			ra->size = max_pages;
-			ra->async_size = max_pages >> 1;
-		}
+		ra->async_size = get_next_ra_size(ra, max_pages);
+		ra->size += ra->async_size;
 	}
 
 	return ra_submit(ra, mapping, filp);

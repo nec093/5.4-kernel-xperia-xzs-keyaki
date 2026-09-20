@@ -12,10 +12,6 @@
   FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
   more details.
 
-  You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
   The full GNU General Public License is included in this distribution in
   the file called "COPYING".
 
@@ -95,6 +91,8 @@ static int ndesc_get_rx_status(void *data, struct stmmac_extra_stats *x,
 		return dma_own;
 
 	if (unlikely(!(rdes0 & RDES0_LAST_DESCRIPTOR))) {
+		pr_warn("%s: Oversized frame spanned multiple buffers\n",
+			__func__);
 		stats->rx_length_errors++;
 		return discard_frame;
 	}
@@ -113,7 +111,7 @@ static int ndesc_get_rx_status(void *data, struct stmmac_extra_stats *x,
 			stats->collisions++;
 		}
 		if (unlikely(rdes0 & RDES0_CRC_ERROR)) {
-			x->rx_crc++;
+			x->rx_crc_errors++;
 			stats->rx_crc_errors++;
 		}
 		ret = discard_frame;
@@ -137,19 +135,15 @@ static int ndesc_get_rx_status(void *data, struct stmmac_extra_stats *x,
 }
 
 static void ndesc_init_rx_desc(struct dma_desc *p, int disable_rx_ic, int mode,
-			       int end, int bfsize)
+			       int end)
 {
-	int bfsize1;
-
 	p->des0 |= cpu_to_le32(RDES0_OWN);
-
-	bfsize1 = min(bfsize, BUF_SIZE_2KiB - 1);
-	p->des1 |= cpu_to_le32(bfsize1 & RDES1_BUFFER1_SIZE_MASK);
+	p->des1 |= cpu_to_le32((BUF_SIZE_2KiB - 1) & RDES1_BUFFER1_SIZE_MASK);
 
 	if (mode == STMMAC_CHAIN_MODE)
 		ndesc_rx_set_on_chain(p, end);
 	else
-		ndesc_rx_set_on_ring(p, end, bfsize);
+		ndesc_rx_set_on_ring(p, end);
 
 	if (disable_rx_ic)
 		p->des1 |= cpu_to_le32(RDES1_DISABLE_IC);
@@ -197,7 +191,7 @@ static void ndesc_release_tx_desc(struct dma_desc *p, int mode)
 
 static void ndesc_prepare_tx_desc(struct dma_desc *p, int is_fs, int len,
 				  bool csum_flag, int mode, bool tx_own,
-				  bool ls)
+				  bool ls, unsigned int tot_pkt_len)
 {
 	unsigned int tdes1 = le32_to_cpu(p->des1);
 

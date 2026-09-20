@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/compiler.h>
 
 struct crypto_pcbc_ctx {
 	struct crypto_cipher *child;
@@ -49,7 +50,7 @@ static int crypto_pcbc_encrypt_segment(struct skcipher_request *req,
 	unsigned int nbytes = walk->nbytes;
 	u8 *src = walk->src.virt.addr;
 	u8 *dst = walk->dst.virt.addr;
-	u8 * const iv = walk->iv;
+	u8 *iv = walk->iv;
 
 	do {
 		crypto_xor(iv, src, bsize);
@@ -70,7 +71,7 @@ static int crypto_pcbc_encrypt_inplace(struct skcipher_request *req,
 	int bsize = crypto_cipher_blocksize(tfm);
 	unsigned int nbytes = walk->nbytes;
 	u8 *src = walk->src.virt.addr;
-	u8 * const iv = walk->iv;
+	u8 *iv = walk->iv;
 	u8 tmpbuf[bsize];
 
 	do {
@@ -81,6 +82,8 @@ static int crypto_pcbc_encrypt_inplace(struct skcipher_request *req,
 
 		src += bsize;
 	} while ((nbytes -= bsize) >= bsize);
+
+	memcpy(walk->iv, iv, bsize);
 
 	return nbytes;
 }
@@ -117,7 +120,7 @@ static int crypto_pcbc_decrypt_segment(struct skcipher_request *req,
 	unsigned int nbytes = walk->nbytes;
 	u8 *src = walk->src.virt.addr;
 	u8 *dst = walk->dst.virt.addr;
-	u8 * const iv = walk->iv;
+	u8 *iv = walk->iv;
 
 	do {
 		crypto_cipher_decrypt_one(tfm, dst, src);
@@ -127,6 +130,8 @@ static int crypto_pcbc_decrypt_segment(struct skcipher_request *req,
 		src += bsize;
 		dst += bsize;
 	} while ((nbytes -= bsize) >= bsize);
+
+	memcpy(walk->iv, iv, bsize);
 
 	return nbytes;
 }
@@ -138,8 +143,8 @@ static int crypto_pcbc_decrypt_inplace(struct skcipher_request *req,
 	int bsize = crypto_cipher_blocksize(tfm);
 	unsigned int nbytes = walk->nbytes;
 	u8 *src = walk->src.virt.addr;
-	u8 * const iv = walk->iv;
-	u8 tmpbuf[bsize] __attribute__ ((aligned(__alignof__(u32))));
+	u8 *iv = walk->iv;
+	u8 tmpbuf[bsize] __aligned(__alignof__(u32));
 
 	do {
 		memcpy(tmpbuf, src, bsize);
@@ -149,6 +154,8 @@ static int crypto_pcbc_decrypt_inplace(struct skcipher_request *req,
 
 		src += bsize;
 	} while ((nbytes -= bsize) >= bsize);
+
+	memcpy(walk->iv, iv, bsize);
 
 	return nbytes;
 }

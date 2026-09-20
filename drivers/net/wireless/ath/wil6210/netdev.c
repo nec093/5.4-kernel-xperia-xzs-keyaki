@@ -61,36 +61,12 @@ static int wil_stop(struct net_device *ndev)
 	return rc;
 }
 
-static int wil_change_mtu(struct net_device *ndev, int new_mtu)
-{
-	struct wil6210_priv *wil = ndev_to_wil(ndev);
-
-	if (new_mtu < 68 || new_mtu > mtu_max) {
-		wil_err(wil, "invalid MTU %d\n", new_mtu);
-		return -EINVAL;
-	}
-
-	wil_dbg_misc(wil, "change MTU %d -> %d\n", ndev->mtu, new_mtu);
-	ndev->mtu = new_mtu;
-
-	return 0;
-}
-
-static int wil_do_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
-{
-	struct wil6210_priv *wil = ndev_to_wil(ndev);
-
-	return wil_ioctl(wil, ifr->ifr_data, cmd);
-}
-
 static const struct net_device_ops wil_netdev_ops = {
 	.ndo_open		= wil_open,
 	.ndo_stop		= wil_stop,
 	.ndo_start_xmit		= wil_start_xmit,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= wil_change_mtu,
-	.ndo_do_ioctl		= wil_do_ioctl,
 };
 
 static int wil6210_netdev_poll_rx(struct napi_struct *napi, int budget)
@@ -146,6 +122,7 @@ static int wil6210_netdev_poll_tx(struct napi_struct *napi, int budget)
 static void wil_dev_setup(struct net_device *dev)
 {
 	ether_setup(dev);
+	dev->max_mtu = mtu_max;
 	dev->tx_queue_len = WIL_TX_Q_LEN_DEFAULT;
 }
 

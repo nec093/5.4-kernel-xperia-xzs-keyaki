@@ -80,7 +80,7 @@ __setup("fpe=", fpe_setup);
 
 extern void init_default_cache_policy(unsigned long);
 extern void paging_init(const struct machine_desc *desc);
-extern void early_paging_init(const struct machine_desc *);
+extern void early_mm_init(const struct machine_desc *);
 extern void adjust_lowmem_bounds(void);
 extern enum reboot_mode reboot_mode;
 extern void setup_dma_zone(const struct machine_desc *desc);
@@ -124,11 +124,6 @@ EXPORT_SYMBOL(cold_boot);
 
 #ifdef MULTI_CPU
 struct processor processor __ro_after_init;
-#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
-struct processor *cpu_vtable[NR_CPUS] = {
-	[0] = &processor,
-};
-#endif
 #endif
 #ifdef MULTI_TLB
 struct cpu_tlb_fns cpu_tlb __ro_after_init;
@@ -329,7 +324,7 @@ static void __init cacheid_init(void)
 	if (arch >= CPU_ARCH_ARMv6) {
 		unsigned int cachetype = read_cpuid_cachetype();
 
-		if ((arch == CPU_ARCH_ARMv7M) && !cachetype) {
+		if ((arch == CPU_ARCH_ARMv7M) && !(cachetype & 0xf000f)) {
 			cacheid = 0;
 		} else if ((cachetype & (7 << 29)) == 4 << 29) {
 			/* ARMv7 register format */
@@ -681,33 +676,28 @@ static void __init smp_build_mpidr_hash(void)
 }
 #endif
 
-/*
- * locate processor in the list of supported processor types.  The linker
- * builds this table for us from the entries in arch/arm/mm/proc-*.S
- */
-struct proc_info_list *lookup_processor(u32 midr)
-{
-	struct proc_info_list *list = lookup_processor_type(midr);
-
-	if (!list) {
-		pr_err("CPU%u: configuration botched (ID %08x), CPU halted\n",
-		       smp_processor_id(), midr);
-		while (1)
-		/* can't use cpu_relax() here as it may require MMU setup */;
-	}
-
-	return list;
-}
-
 static void __init setup_processor(void)
 {
-	unsigned int midr = read_cpuid_id();
-	struct proc_info_list *list = lookup_processor(midr);
+	struct proc_info_list *list;
+
+	/*
+	 * locate processor in the list of supported processor
+	 * types.  The linker builds this table for us from the
+	 * entries in arch/arm/mm/proc-*.S
+	 */
+	list = lookup_processor_type(read_cpuid_id());
+	if (!list) {
+		pr_err("CPU configuration botched (ID %08x), unable to continue.\n",
+		       read_cpuid_id());
+		while (1);
+	}
 
 	cpu_name = list->cpu_name;
 	__cpu_architecture = __get_cpu_architecture();
 
-	init_proc_vtable(list->proc);
+#ifdef MULTI_CPU
+	processor = *list->proc;
+#endif
 #ifdef MULTI_TLB
 	cpu_tlb = *list->tlb;
 #endif
@@ -719,7 +709,7 @@ static void __init setup_processor(void)
 #endif
 
 	pr_info("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
-		list->cpu_name, midr, midr & 15,
+		cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
 		proc_arch[cpu_architecture()], get_cr());
 
 	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
@@ -1006,6 +996,9 @@ static void __init reserve_crashkernel(void)
 
 	if (crash_base <= 0) {
 		unsigned long long crash_max = idmap_to_phys((u32)~0);
+		unsigned long long lowmem_max = __pa(high_memory - 1) + 1;
+		if (crash_max > lowmem_max)
+			crash_max = lowmem_max;
 		crash_base = memblock_find_in_range(CRASH_ALIGN, crash_max,
 						    crash_size, CRASH_ALIGN);
 		if (!crash_base) {
@@ -1109,7 +1102,7 @@ void __init setup_arch(char **cmdline_p)
 	parse_early_param();
 
 #ifdef CONFIG_MMU
-	early_paging_init(mdesc);
+	early_mm_init(mdesc);
 #endif
 	setup_dma_zone(mdesc);
 	xen_early_init();

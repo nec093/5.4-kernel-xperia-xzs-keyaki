@@ -17,7 +17,6 @@
 #define __ASM_MODULE_H
 
 #include <asm-generic/module.h>
-#include <asm/memory.h>
 
 #define MODULE_ARCH_VERMAGIC	"aarch64"
 
@@ -31,6 +30,9 @@ struct mod_plt_sec {
 struct mod_arch_specific {
 	struct mod_plt_sec	core;
 	struct mod_plt_sec	init;
+
+	/* for CONFIG_DYNAMIC_FTRACE */
+	void			*ftrace_trampoline;
 };
 #endif
 
@@ -38,10 +40,6 @@ u64 module_emit_plt_entry(struct module *mod, void *loc, const Elf64_Rela *rela,
 			  Elf64_Sym *sym);
 
 #ifdef CONFIG_RANDOMIZE_BASE
-#ifdef CONFIG_MODVERSIONS
-#define ARCH_RELOCATES_KCRCTAB
-#define reloc_start 		(kimage_vaddr - KIMAGE_VADDR)
-#endif
 extern u64 module_alloc_base;
 #else
 #define module_alloc_base	((u64)_etext - MODULES_VSIZE)

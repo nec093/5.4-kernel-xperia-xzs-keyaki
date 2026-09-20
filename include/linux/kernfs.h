@@ -48,6 +48,7 @@ enum kernfs_node_flag {
 	KERNFS_SUICIDED		= 0x0800,
 	KERNFS_EMPTY_DIR	= 0x1000,
 	KERNFS_HAS_RELEASE	= 0x2000,
+	KERNFS_HAS_RELEASE	= 0x2000,
 };
 
 /* @flags for kernfs_create_root() */
@@ -70,6 +71,12 @@ enum kernfs_root_flag {
 	 * following flag enables that behavior.
 	 */
 	KERNFS_ROOT_EXTRA_OPEN_PERM_CHECK	= 0x0002,
+
+	/*
+	 * The filesystem supports exportfs operation, so userspace can use
+	 * fhandle to access nodes of the fs.
+	 */
+	KERNFS_ROOT_SUPPORT_EXPORTOP		= 0x0004,
 };
 
 /* type-specific structures for kernfs_node union members */
@@ -94,6 +101,21 @@ struct kernfs_elem_attr {
 	struct kernfs_open_node	*open;
 	loff_t			size;
 	struct kernfs_node	*notify_next;	/* for kernfs_notify() */
+};
+
+/* represent a kernfs node */
+union kernfs_node_id {
+	struct {
+		/*
+		 * blktrace will export this struct as a simplified 'struct
+		 * fid' (which is a big data struction), so userspace can use
+		 * it to find kernfs node. The layout must match the first two
+		 * fields of 'struct fid' exactly.
+		 */
+		u32		ino;
+		u32		generation;
+	};
+	u64			id;
 };
 
 /*
@@ -132,9 +154,9 @@ struct kernfs_node {
 
 	void			*priv;
 
+	union kernfs_node_id	id;
 	unsigned short		flags;
 	umode_t			mode;
-	unsigned int		ino;
 	struct kernfs_iattrs	*iattr;
 };
 
@@ -155,6 +177,7 @@ struct kernfs_syscall_ops {
 	int (*rename)(struct kernfs_node *kn, struct kernfs_node *new_parent,
 		      const char *new_name);
 	int (*show_path)(struct seq_file *sf, struct kernfs_node *kn,
+	struct seq_file		*seq_file;
 			 struct kernfs_root *root);
 };
 
@@ -164,7 +187,8 @@ struct kernfs_root {
 	unsigned int		flags;	/* KERNFS_ROOT_* flags */
 
 	/* private fields, do not use outside kernfs proper */
-	struct ida		ino_ida;
+	struct idr		ino_idr;
+	u32			next_generation;
 	struct kernfs_syscall_ops *syscall_ops;
 
 	/* list of kernfs_super_info of this root, protected by kernfs_mutex */
@@ -188,12 +212,20 @@ struct kernfs_open_file {
 	char			*prealloc_buf;
 
 	size_t			atomic_write_len;
-	bool			mmapped;
+	bool			mmapped:1;
+	bool			released:1;
 	bool			released:1;
 	const struct vm_operations_struct *vm_ops;
 };
 
 struct kernfs_ops {
+	/*
+	 * Optional open/release methods.  Both are called with
+	 * @of->seq_file populated.
+	 */
+	int (*open)(struct kernfs_open_file *of);
+	void (*release)(struct kernfs_open_file *of);
+
 	/*
 	 * Optional open/release methods.  Both are called with
 	 * @of->seq_file populated.
@@ -342,6 +374,8 @@ struct super_block *kernfs_pin_sb(struct kernfs_root *root, const void *ns);
 
 void kernfs_init(void);
 
+struct kernfs_node *kernfs_get_node_by_id(struct kernfs_root *root,
+	const union kernfs_node_id *id);
 #else	/* CONFIG_KERNFS */
 
 static inline enum kernfs_node_type kernfs_type(struct kernfs_node *kn)

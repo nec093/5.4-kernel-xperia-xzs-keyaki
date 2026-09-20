@@ -18,10 +18,15 @@
 #include <linux/netdevice.h>
 #include <linux/sched.h>
 #include <linux/sched/loadavg.h>
+#include <linux/sched/stat.h>
 #include <asm/appldata.h>
 #include <asm/smp.h>
 
 #include "appldata.h"
+
+
+#define LOAD_INT(x) ((x) >> FSHIFT)
+#define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
 /*
  * OS data

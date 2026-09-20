@@ -36,7 +36,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 {
 	const struct nft_meta *priv = nft_expr_priv(expr);
 	const struct sk_buff *skb = pkt->skb;
-	const struct net_device *in = pkt->in, *out = pkt->out;
+	const struct net_device *in = nft_in(pkt), *out = nft_out(pkt);
 	struct sock *sk;
 	u32 *dest = &regs->data[priv->dreg];
 
@@ -48,7 +48,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 		nft_reg_store16(dest, (__force u16)skb->protocol);
 		break;
 	case NFT_META_NFPROTO:
-		nft_reg_store8(dest, pkt->pf);
+		nft_reg_store8(dest, nft_pf(pkt));
 		break;
 	case NFT_META_L4PROTO:
 		if (!pkt->tprot_set)
@@ -143,7 +143,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 			break;
 		}
 
-		switch (pkt->pf) {
+		switch (nft_pf(pkt)) {
 		case NFPROTO_IPV4:
 			if (ipv4_is_multicast(ip_hdr(skb)->daddr))
 				nft_reg_store8(dest, PACKET_MULTICAST);
@@ -151,10 +151,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 				nft_reg_store8(dest, PACKET_BROADCAST);
 			break;
 		case NFPROTO_IPV6:
-			if (ipv6_hdr(skb)->daddr.s6_addr[0] == 0xFF)
-				nft_reg_store8(dest, PACKET_MULTICAST);
-			else
-				nft_reg_store8(dest, PACKET_BROADCAST);
+			nft_reg_store8(dest, PACKET_MULTICAST);
 			break;
 		case NFPROTO_NETDEV:
 			switch (skb->protocol) {
@@ -338,6 +335,11 @@ int nft_meta_set_validate(const struct nft_ctx *ctx,
 	case NFPROTO_NETDEV:
 		hooks = 1 << NF_NETDEV_INGRESS;
 		break;
+	case NFPROTO_IPV4:
+	case NFPROTO_IPV6:
+	case NFPROTO_INET:
+		hooks = 1 << NF_INET_PRE_ROUTING;
+		break;
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -369,10 +371,6 @@ int nft_meta_set_init(const struct nft_ctx *ctx,
 	default:
 		return -EOPNOTSUPP;
 	}
-
-	err = nft_meta_set_validate(ctx, expr, NULL);
-	if (err < 0)
-		return err;
 
 	priv->sreg = nft_parse_register(tb[NFTA_META_SREG]);
 	err = nft_validate_register_load(priv->sreg, len);
@@ -469,7 +467,7 @@ nft_meta_select_ops(const struct nft_ctx *ctx,
 
 static struct nft_expr_type nft_meta_type __read_mostly = {
 	.name		= "meta",
-	.select_ops	= &nft_meta_select_ops,
+	.select_ops	= nft_meta_select_ops,
 	.policy		= nft_meta_policy,
 	.maxattr	= NFTA_META_MAX,
 	.owner		= THIS_MODULE,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the linux kernel.
 #
@@ -57,14 +58,19 @@ arm64-obj-$(CONFIG_MSM_APP_SETTINGS)	+= app_setting.o
 arm64-obj-$(CONFIG_HIBERNATION)		+= hibernate.o hibernate-asm.o
 arm64-obj-$(CONFIG_KEXEC)		+= machine_kexec.o relocate_kernel.o	\
 					   cpu-reset.o
-arm64-obj-$(CONFIG_ARM64_SSBD)		+= ssbd.o
-
-ifeq ($(CONFIG_KVM),y)
-arm64-obj-$(CONFIG_HARDEN_BRANCH_PREDICTOR)	+= bpi.o
-endif
+arm64-obj-$(CONFIG_ARM64_RELOC_TEST)	+= arm64-reloc-test.o
+arm64-reloc-test-y := reloc_test_core.o reloc_test_syms.o
+arm64-obj-$(CONFIG_CRASH_DUMP)		+= crash_dump.o
 
 obj-y					+= $(arm64-obj-y) vdso/ probes/
 obj-$(CONFIG_VDSO32)			+= vdso32/
 obj-m					+= $(arm64-obj-m)
 head-y					:= head.o
 extra-y					+= $(head-y) vmlinux.lds
+
+ifeq ($(CONFIG_DEBUG_EFI),y)
+AFLAGS_head.o += -DVMLINUX_PATH="\"$(realpath $(objtree)/vmlinux)\""
+endif
+
+# will be included by each individual module but not by the core kernel itself
+extra-$(CONFIG_DYNAMIC_FTRACE) += ftrace-mod.o

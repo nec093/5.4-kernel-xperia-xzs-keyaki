@@ -132,6 +132,12 @@ static inline int inet_request_bound_dev_if(const struct sock *sk,
 	return sk->sk_bound_dev_if;
 }
 
+static inline struct ip_options_rcu *ireq_opt_deref(const struct inet_request_sock *ireq)
+{
+	return rcu_dereference_check(ireq->ireq_opt,
+				     refcount_read(&ireq->req.rsk_refcnt) > 0);
+}
+
 struct inet_cork {
 	unsigned int		flags;
 	__be32			addr;
@@ -232,6 +238,7 @@ struct inet_sock {
 #define IP_CMSG_PASSSEC		BIT(5)
 #define IP_CMSG_ORIGDSTADDR	BIT(6)
 #define IP_CMSG_CHECKSUM	BIT(7)
+#define IP_CMSG_RECVFRAGSIZE	BIT(8)
 
 /**
  * sk_to_full_sk - Access to a full socket

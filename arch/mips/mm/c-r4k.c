@@ -37,7 +37,7 @@
 #include <asm/cacheflush.h> /* for run_uncached() */
 #include <asm/traps.h>
 #include <asm/dma-coherence.h>
-#include <asm/mips-cm.h>
+#include <asm/mips-cps.h>
 
 /*
  * Bits describing what cache ops an SMP callback function may perform.
@@ -1457,6 +1457,8 @@ static void probe_pcache(void)
 	switch (current_cpu_type()) {
 	case CPU_20KC:
 	case CPU_25KF:
+	case CPU_I6400:
+	case CPU_I6500:
 	case CPU_SB1:
 	case CPU_SB1A:
 	case CPU_XLR:
@@ -1483,7 +1485,6 @@ static void probe_pcache(void)
 	case CPU_PROAPTIV:
 	case CPU_M5150:
 	case CPU_QEMU_GENERIC:
-	case CPU_I6400:
 	case CPU_P6600:
 	case CPU_M6250:
 		if (!(read_c0_config7() & MIPS_CONF7_IAR) &&
@@ -1502,6 +1503,10 @@ static void probe_pcache(void)
 			c->dcache.flags |= MIPS_CACHE_ALIASES;
 	}
 
+	/* Physically indexed caches don't suffer from virtual aliasing */
+	if (c->dcache.flags & MIPS_CACHE_PINDEX)
+		c->dcache.flags &= ~MIPS_CACHE_ALIASES;
+
 	switch (current_cpu_type()) {
 	case CPU_20KC:
 		/*
@@ -1513,6 +1518,7 @@ static void probe_pcache(void)
 
 	case CPU_ALCHEMY:
 	case CPU_I6400:
+	case CPU_I6500:
 		c->icache.flags |= MIPS_CACHE_IC_F_DC;
 		break;
 

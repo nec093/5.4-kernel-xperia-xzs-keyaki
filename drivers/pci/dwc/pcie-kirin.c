@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * PCIe host controller driver for Kirin Phone SoCs
  *
@@ -6,8 +5,13 @@
  *		http://www.huawei.com
  *
  * Author: Xiaowei Song <songxiaowei@huawei.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
+#include <asm/compiler.h>
 #include <linux/compiler.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -486,7 +490,7 @@ static int kirin_pcie_probe(struct platform_device *pdev)
 		return ret;
 
 	kirin_pcie->gpio_id_reset = of_get_named_gpio(dev->of_node,
-						      "reset-gpios", 0);
+						      "reset-gpio", 0);
 	if (kirin_pcie->gpio_id_reset < 0)
 		return -ENODEV;
 
@@ -504,7 +508,7 @@ static const struct of_device_id kirin_pcie_match[] = {
 	{},
 };
 
-static struct platform_driver kirin_pcie_driver = {
+struct platform_driver kirin_pcie_driver = {
 	.probe			= kirin_pcie_probe,
 	.driver			= {
 		.name			= "kirin-pcie",

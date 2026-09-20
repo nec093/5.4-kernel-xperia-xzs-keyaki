@@ -45,7 +45,7 @@ static mempool_t *fscrypt_bounce_page_pool = NULL;
 static LIST_HEAD(fscrypt_free_ctxs);
 static DEFINE_SPINLOCK(fscrypt_ctx_lock);
 
-static struct workqueue_struct *fscrypt_read_workqueue;
+struct workqueue_struct *fscrypt_read_workqueue;
 static DEFINE_MUTEX(fscrypt_init_mutex);
 
 static struct kmem_cache *fscrypt_ctx_cachep;
@@ -132,6 +132,21 @@ struct fscrypt_ctx *fscrypt_get_ctx(const struct inode *inode, gfp_t gfp_flags)
 	return ctx;
 }
 EXPORT_SYMBOL(fscrypt_get_ctx);
+
+/**
+ * page_crypt_complete() - completion callback for page crypto
+ * @req: The asynchronous cipher request context
+ * @res: The result of the cipher operation
+ */
+static void page_crypt_complete(struct crypto_async_request *req, int res)
+{
+	struct fscrypt_completion_result *ecr = req->data;
+
+	if (res == -EINPROGRESS)
+		return;
+	ecr->res = res;
+	complete(&ecr->completion);
+}
 
 int fscrypt_do_page_crypto(const struct inode *inode, fscrypt_direction_t rw,
 			   u64 lblk_num, struct page *src_page,
@@ -397,8 +412,11 @@ int fscrypt_initialize(unsigned int cop_flags)
 {
 	int i, res = -ENOMEM;
 
-	/* No need to allocate a bounce page pool if this FS won't use it. */
-	if (cop_flags & FS_CFLG_OWN_PAGES)
+	/*
+	 * No need to allocate a bounce page pool if there already is one or
+	 * this FS won't use it.
+	 */
+	if (cop_flags & FS_CFLG_OWN_PAGES || fscrypt_bounce_page_pool)
 		return 0;
 
 	mutex_lock(&fscrypt_init_mutex);
@@ -433,17 +451,8 @@ fail:
  */
 static int __init fscrypt_init(void)
 {
-	/*
-	 * Use an unbound workqueue to allow bios to be decrypted in parallel
-	 * even when they happen to complete on the same CPU.  This sacrifices
-	 * locality, but it's worthwhile since decryption is CPU-intensive.
-	 *
-	 * Also use a high-priority workqueue to prioritize decryption work,
-	 * which blocks reads from completing, over regular application tasks.
-	 */
 	fscrypt_read_workqueue = alloc_workqueue("fscrypt_read_queue",
-						 WQ_UNBOUND | WQ_HIGHPRI,
-						 num_online_cpus());
+							WQ_HIGHPRI, 0);
 	if (!fscrypt_read_workqueue)
 		goto fail;
 

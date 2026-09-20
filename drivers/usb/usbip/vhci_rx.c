@@ -37,23 +37,24 @@ struct urb *pickup_urb_and_free_priv(struct vhci_device *vdev, __u32 seqnum)
 		urb = priv->urb;
 		status = urb->status;
 
-		usbip_dbg_vhci_rx("find urb seqnum %u\n", seqnum);
+		usbip_dbg_vhci_rx("find urb %p vurb %p seqnum %u\n",
+				urb, priv, seqnum);
 
 		switch (status) {
 		case -ENOENT:
 			/* fall through */
 		case -ECONNRESET:
-			dev_dbg(&urb->dev->dev,
-				 "urb seq# %u was unlinked %ssynchronuously\n",
-				 seqnum, status == -ENOENT ? "" : "a");
+			dev_info(&urb->dev->dev,
+				 "urb %p was unlinked %ssynchronuously.\n", urb,
+				 status == -ENOENT ? "" : "a");
 			break;
 		case -EINPROGRESS:
 			/* no info output */
 			break;
 		default:
-			dev_dbg(&urb->dev->dev,
-				 "urb seq# %u may be in a error, status %d\n",
-				 seqnum, status);
+			dev_info(&urb->dev->dev,
+				 "urb %p may be in a error, status %d\n", urb,
+				 status);
 		}
 
 		list_del(&priv->list);
@@ -69,7 +70,8 @@ struct urb *pickup_urb_and_free_priv(struct vhci_device *vdev, __u32 seqnum)
 static void vhci_recv_ret_submit(struct vhci_device *vdev,
 				 struct usbip_header *pdu)
 {
-	struct vhci_hcd *vhci = vdev_to_vhci(vdev);
+	struct vhci_hcd *vhci_hcd = vdev_to_vhci_hcd(vdev);
+	struct vhci *vhci = vhci_hcd->vhci;
 	struct usbip_device *ud = &vdev->ud;
 	struct urb *urb;
 	unsigned long flags;
@@ -79,9 +81,9 @@ static void vhci_recv_ret_submit(struct vhci_device *vdev,
 	spin_unlock_irqrestore(&vdev->priv_lock, flags);
 
 	if (!urb) {
-		pr_err("cannot find a urb of seqnum %u max seqnum %d\n",
-			pdu->base.seqnum,
-			atomic_read(&vhci->seqnum));
+		pr_err("cannot find a urb of seqnum %u\n", pdu->base.seqnum);
+		pr_info("max seqnum %d\n",
+			atomic_read(&vhci_hcd->seqnum));
 		usbip_event_add(ud, VDEV_EVENT_ERROR_TCP);
 		return;
 	}
@@ -90,31 +92,26 @@ static void vhci_recv_ret_submit(struct vhci_device *vdev,
 	usbip_pack_pdu(pdu, urb, USBIP_RET_SUBMIT, 0);
 
 	/* recv transfer buffer */
-	if (usbip_recv_xbuff(ud, urb) < 0) {
-		urb->status = -EPROTO;
-		goto error;
-	}
+	if (usbip_recv_xbuff(ud, urb) < 0)
+		return;
 
 	/* recv iso_packet_descriptor */
-	if (usbip_recv_iso(ud, urb) < 0) {
-		urb->status = -EPROTO;
-		goto error;
-	}
+	if (usbip_recv_iso(ud, urb) < 0)
+		return;
 
 	/* restore the padding in iso packets */
 	usbip_pad_iso(ud, urb);
 
-error:
 	if (usbip_dbg_flag_vhci_rx)
 		usbip_dump_urb(urb);
 
-	usbip_dbg_vhci_rx("now giveback urb %u\n", pdu->base.seqnum);
+	usbip_dbg_vhci_rx("now giveback urb %p\n", urb);
 
 	spin_lock_irqsave(&vhci->lock, flags);
-	usb_hcd_unlink_urb_from_ep(vhci_to_hcd(vhci), urb);
+	usb_hcd_unlink_urb_from_ep(vhci_hcd_to_hcd(vhci_hcd), urb);
 	spin_unlock_irqrestore(&vhci->lock, flags);
 
-	usb_hcd_giveback_urb(vhci_to_hcd(vhci), urb, urb->status);
+	usb_hcd_giveback_urb(vhci_hcd_to_hcd(vhci_hcd), urb, urb->status);
 
 	usbip_dbg_vhci_rx("Leave\n");
 }
@@ -147,7 +144,8 @@ static struct vhci_unlink *dequeue_pending_unlink(struct vhci_device *vdev,
 static void vhci_recv_ret_unlink(struct vhci_device *vdev,
 				 struct usbip_header *pdu)
 {
-	struct vhci_hcd *vhci = vdev_to_vhci(vdev);
+	struct vhci_hcd *vhci_hcd = vdev_to_vhci_hcd(vdev);
+	struct vhci *vhci = vhci_hcd->vhci;
 	struct vhci_unlink *unlink;
 	struct urb *urb;
 	unsigned long flags;
@@ -174,17 +172,17 @@ static void vhci_recv_ret_unlink(struct vhci_device *vdev,
 		pr_info("the urb (seqnum %d) was already given back\n",
 			pdu->base.seqnum);
 	} else {
-		usbip_dbg_vhci_rx("now giveback urb %d\n", pdu->base.seqnum);
+		usbip_dbg_vhci_rx("now giveback urb %p\n", urb);
 
 		/* If unlink is successful, status is -ECONNRESET */
 		urb->status = pdu->u.ret_unlink.status;
 		pr_info("urb->status %d\n", urb->status);
 
 		spin_lock_irqsave(&vhci->lock, flags);
-		usb_hcd_unlink_urb_from_ep(vhci_to_hcd(vhci), urb);
+		usb_hcd_unlink_urb_from_ep(vhci_hcd_to_hcd(vhci_hcd), urb);
 		spin_unlock_irqrestore(&vhci->lock, flags);
 
-		usb_hcd_giveback_urb(vhci_to_hcd(vhci), urb, urb->status);
+		usb_hcd_giveback_urb(vhci_hcd_to_hcd(vhci_hcd), urb, urb->status);
 	}
 
 	kfree(unlink);

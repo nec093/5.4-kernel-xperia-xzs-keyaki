@@ -29,6 +29,9 @@ genhdr-y += version.h
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/a.out.h \
 		  $(srctree)/arch/$(SRCARCH)/include/asm/a.out.h),)
 header-y += a.out.h
+
+ifeq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/a.out.h),)
+no-export-headers += a.out.h
 endif
 
 header-y += acct.h
@@ -243,12 +246,12 @@ header-y += keyctl.h
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/kvm.h \
 		  $(srctree)/arch/$(SRCARCH)/include/asm/kvm.h),)
 header-y += kvm.h
+ifeq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/kvm.h),)
+no-export-headers += kvm.h
 endif
 
-
-ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/kvm_para.h \
-		  $(srctree)/arch/$(SRCARCH)/include/asm/kvm_para.h),)
-header-y += kvm_para.h
+ifeq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/kvm_para.h),)
+no-export-headers += kvm_para.h
 endif
 
 header-y += hw_breakpoint.h

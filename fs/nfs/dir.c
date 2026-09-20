@@ -151,7 +151,7 @@ struct nfs_cache_array {
 	struct nfs_cache_array_entry array[0];
 };
 
-typedef int (*decode_dirent_t)(struct xdr_stream *, struct nfs_entry *, int);
+typedef int (*decode_dirent_t)(struct xdr_stream *, struct nfs_entry *, bool);
 typedef struct {
 	struct file	*file;
 	struct page	*page;
@@ -165,41 +165,9 @@ typedef struct {
 	unsigned long	timestamp;
 	unsigned long	gencount;
 	unsigned int	cache_entry_index;
-	unsigned int	plus:1;
-	unsigned int	eof:1;
+	bool plus;
+	bool eof;
 } nfs_readdir_descriptor_t;
-
-static
-void nfs_readdir_init_array(struct page *page)
-{
-	struct nfs_cache_array *array;
-
-	array = kmap_atomic(page);
-	memset(array, 0, sizeof(struct nfs_cache_array));
-	array->eof_index = -1;
-	kunmap_atomic(array);
-}
-
-/*
- * The caller is responsible for calling nfs_readdir_release_array(page)
- */
-static
-struct nfs_cache_array *nfs_readdir_get_array(struct page *page)
-{
-	void *ptr;
-	if (page == NULL)
-		return ERR_PTR(-EIO);
-	ptr = kmap(page);
-	if (ptr == NULL)
-		return ERR_PTR(-ENOMEM);
-	return ptr;
-}
-
-static
-void nfs_readdir_release_array(struct page *page)
-{
-	kunmap(page);
-}
 
 /*
  * we are freeing strings created by nfs_add_to_readdir_array()
@@ -213,7 +181,6 @@ void nfs_readdir_clear_array(struct page *page)
 	array = kmap_atomic(page);
 	for (i = 0; i < array->size; i++)
 		kfree(array->array[i].string.name);
-	array->size = 0;
 	kunmap_atomic(array);
 }
 
@@ -241,12 +208,9 @@ int nfs_readdir_make_qstr(struct qstr *string, const char *name, unsigned int le
 static
 int nfs_readdir_add_to_array(struct nfs_entry *entry, struct page *page)
 {
-	struct nfs_cache_array *array = nfs_readdir_get_array(page);
+	struct nfs_cache_array *array = kmap(page);
 	struct nfs_cache_array_entry *cache_entry;
 	int ret;
-
-	if (IS_ERR(array))
-		return PTR_ERR(array);
 
 	cache_entry = &array->array[array->size];
 
@@ -266,7 +230,7 @@ int nfs_readdir_add_to_array(struct nfs_entry *entry, struct page *page)
 	if (entry->eof != 0)
 		array->eof_index = array->size;
 out:
-	nfs_readdir_release_array(page);
+	kunmap(page);
 	return ret;
 }
 
@@ -289,7 +253,7 @@ int nfs_readdir_search_for_pos(struct nfs_cache_array *array, nfs_readdir_descri
 	desc->cache_entry_index = index;
 	return 0;
 out_eof:
-	desc->eof = true;
+	desc->eof = 1;
 	return -EBADCOOKIE;
 }
 
@@ -343,7 +307,7 @@ int nfs_readdir_search_for_cookie(struct nfs_cache_array *array, nfs_readdir_des
 	if (array->eof_index >= 0) {
 		status = -EBADCOOKIE;
 		if (*desc->dir_cookie == array->last_cookie)
-			desc->eof = true;
+			desc->eof = 1;
 	}
 out:
 	return status;
@@ -355,11 +319,7 @@ int nfs_readdir_search_array(nfs_readdir_descriptor_t *desc)
 	struct nfs_cache_array *array;
 	int status;
 
-	array = nfs_readdir_get_array(desc->page);
-	if (IS_ERR(array)) {
-		status = PTR_ERR(array);
-		goto out;
-	}
+	array = kmap(desc->page);
 
 	if (*desc->dir_cookie == 0)
 		status = nfs_readdir_search_for_pos(array, desc);
@@ -371,8 +331,7 @@ int nfs_readdir_search_array(nfs_readdir_descriptor_t *desc)
 		desc->current_index += array->size;
 		desc->page_index++;
 	}
-	nfs_readdir_release_array(desc->page);
-out:
+	kunmap(desc->page);
 	return status;
 }
 
@@ -396,7 +355,7 @@ int nfs_readdir_xdr_filler(struct page **pages, nfs_readdir_descriptor_t *desc,
 		if (error == -ENOTSUPP && desc->plus) {
 			NFS_SERVER(inode)->caps &= ~NFS_CAP_READDIRPLUS;
 			clear_bit(NFS_INO_ADVISE_RDPLUS, &NFS_I(inode)->flags);
-			desc->plus = 0;
+			desc->plus = false;
 			goto again;
 		}
 		goto error;
@@ -457,14 +416,17 @@ bool nfs_use_readdirplus(struct inode *dir, struct dir_context *ctx)
 }
 
 /*
- * This function is called by the lookup code to request the use of
- * readdirplus to accelerate any future lookups in the same
+ * This function is called by the lookup and getattr code to request the
+ * use of readdirplus to accelerate any future lookups in the same
  * directory.
  */
-static
 void nfs_advise_use_readdirplus(struct inode *dir)
 {
-	set_bit(NFS_INO_ADVISE_RDPLUS, &NFS_I(dir)->flags);
+	struct nfs_inode *nfsi = NFS_I(dir);
+
+	if (nfs_server_capable(dir, NFS_CAP_READDIRPLUS) &&
+	    !list_empty(&nfsi->open_files))
+		set_bit(NFS_INO_ADVISE_RDPLUS, &nfsi->flags);
 }
 
 /*
@@ -477,8 +439,11 @@ void nfs_advise_use_readdirplus(struct inode *dir)
  */
 void nfs_force_use_readdirplus(struct inode *dir)
 {
-	if (!list_empty(&NFS_I(dir)->open_files)) {
-		nfs_advise_use_readdirplus(dir);
+	struct nfs_inode *nfsi = NFS_I(dir);
+
+	if (nfs_server_capable(dir, NFS_CAP_READDIRPLUS) &&
+	    !list_empty(&nfsi->open_files)) {
+		set_bit(NFS_INO_ADVISE_RDPLUS, &nfsi->flags);
 		invalidate_mapping_pages(dir->i_mapping, 0, -1);
 	}
 }
@@ -592,7 +557,7 @@ int nfs_readdir_page_filler(nfs_readdir_descriptor_t *desc, struct nfs_entry *en
 
 		count++;
 
-		if (desc->plus != 0)
+		if (desc->plus)
 			nfs_prime_dcache(file_dentry(desc->file), entry);
 
 		status = nfs_readdir_add_to_array(entry, page);
@@ -602,13 +567,10 @@ int nfs_readdir_page_filler(nfs_readdir_descriptor_t *desc, struct nfs_entry *en
 
 out_nopages:
 	if (count == 0 || (status == -EBADCOOKIE && entry->eof != 0)) {
-		array = nfs_readdir_get_array(page);
-		if (!IS_ERR(array)) {
-			array->eof_index = array->size;
-			status = 0;
-			nfs_readdir_release_array(page);
-		} else
-			status = PTR_ERR(array);
+		array = kmap(page);
+		array->eof_index = array->size;
+		status = 0;
+		kunmap(page);
 	}
 
 	put_page(scratch);
@@ -655,8 +617,6 @@ int nfs_readdir_xdr_to_array(nfs_readdir_descriptor_t *desc, struct page *page, 
 	int status = -ENOMEM;
 	unsigned int array_size = ARRAY_SIZE(pages);
 
-	nfs_readdir_init_array(page);
-
 	entry.prev_cookie = 0;
 	entry.cookie = desc->last_cookie;
 	entry.eof = 0;
@@ -672,11 +632,9 @@ int nfs_readdir_xdr_to_array(nfs_readdir_descriptor_t *desc, struct page *page, 
 		goto out;
 	}
 
-	array = nfs_readdir_get_array(page);
-	if (IS_ERR(array)) {
-		status = PTR_ERR(array);
-		goto out_label_free;
-	}
+	array = kmap(page);
+	memset(array, 0, sizeof(struct nfs_cache_array));
+	array->eof_index = -1;
 
 	status = nfs_readdir_alloc_pages(pages, array_size);
 	if (status < 0)
@@ -698,8 +656,7 @@ int nfs_readdir_xdr_to_array(nfs_readdir_descriptor_t *desc, struct page *page, 
 
 	nfs_readdir_free_pages(pages, array_size);
 out_release_array:
-	nfs_readdir_release_array(page);
-out_label_free:
+	kunmap(page);
 	nfs4_label_free(entry.label);
 out:
 	nfs_free_fattr(entry.fattr);
@@ -731,7 +688,6 @@ int nfs_readdir_filler(nfs_readdir_descriptor_t *desc, struct page* page)
 	unlock_page(page);
 	return 0;
  error:
-	nfs_readdir_clear_array(page);
 	unlock_page(page);
 	return ret;
 }
@@ -739,6 +695,8 @@ int nfs_readdir_filler(nfs_readdir_descriptor_t *desc, struct page* page)
 static
 void cache_page_release(nfs_readdir_descriptor_t *desc)
 {
+	if (!desc->page->mapping)
+		nfs_readdir_clear_array(desc->page);
 	put_page(desc->page);
 	desc->page = NULL;
 }
@@ -752,28 +710,19 @@ struct page *get_cache_page(nfs_readdir_descriptor_t *desc)
 
 /*
  * Returns 0 if desc->dir_cookie was found on page desc->page_index
- * and locks the page to prevent removal from the page cache.
  */
 static
-int find_and_lock_cache_page(nfs_readdir_descriptor_t *desc)
+int find_cache_page(nfs_readdir_descriptor_t *desc)
 {
 	int res;
 
 	desc->page = get_cache_page(desc);
 	if (IS_ERR(desc->page))
 		return PTR_ERR(desc->page);
-	res = lock_page_killable(desc->page);
+
+	res = nfs_readdir_search_array(desc);
 	if (res != 0)
-		goto error;
-	res = -EAGAIN;
-	if (desc->page->mapping != NULL) {
-		res = nfs_readdir_search_array(desc);
-		if (res == 0)
-			return 0;
-	}
-	unlock_page(desc->page);
-error:
-	cache_page_release(desc);
+		cache_page_release(desc);
 	return res;
 }
 
@@ -788,7 +737,7 @@ int readdir_search_pagecache(nfs_readdir_descriptor_t *desc)
 		desc->last_cookie = 0;
 	}
 	do {
-		res = find_and_lock_cache_page(desc);
+		res = find_cache_page(desc);
 	} while (res == -EAGAIN);
 	return res;
 }
@@ -805,19 +754,14 @@ int nfs_do_filldir(nfs_readdir_descriptor_t *desc)
 	struct nfs_cache_array *array = NULL;
 	struct nfs_open_dir_context *ctx = file->private_data;
 
-	array = nfs_readdir_get_array(desc->page);
-	if (IS_ERR(array)) {
-		res = PTR_ERR(array);
-		goto out;
-	}
-
+	array = kmap(desc->page);
 	for (i = desc->cache_entry_index; i < array->size; i++) {
 		struct nfs_cache_array_entry *ent;
 
 		ent = &array->array[i];
 		if (!dir_emit(desc->ctx, ent->string.name, ent->string.len,
 		    nfs_compat_user_ino64(ent->ino), ent->d_type)) {
-			desc->eof = true;
+			desc->eof = 1;
 			break;
 		}
 		desc->ctx->pos++;
@@ -829,10 +773,10 @@ int nfs_do_filldir(nfs_readdir_descriptor_t *desc)
 			ctx->duped = 1;
 	}
 	if (array->eof_index >= 0)
-		desc->eof = true;
+		desc->eof = 1;
 
-	nfs_readdir_release_array(desc->page);
-out:
+	kunmap(desc->page);
+	cache_page_release(desc);
 	dfprintk(DIRCACHE, "NFS: nfs_do_filldir() filling ended @ cookie %Lu; returning = %d\n",
 			(unsigned long long)*desc->dir_cookie, res);
 	return res;
@@ -878,13 +822,13 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc)
 
 	status = nfs_do_filldir(desc);
 
- out_release:
-	nfs_readdir_clear_array(desc->page);
-	cache_page_release(desc);
  out:
 	dfprintk(DIRCACHE, "NFS: %s: returns %d\n",
 			__func__, status);
 	return status;
+ out_release:
+	cache_page_release(desc);
+	goto out;
 }
 
 /* The file offset position represents the dirent entry number.  A
@@ -916,7 +860,7 @@ static int nfs_readdir(struct file *file, struct dir_context *ctx)
 	desc->ctx = ctx;
 	desc->dir_cookie = &dir_ctx->dir_cookie;
 	desc->decode = NFS_PROTO(inode)->decode_dirent;
-	desc->plus = nfs_use_readdirplus(inode, ctx) ? 1 : 0;
+	desc->plus = nfs_use_readdirplus(inode, ctx);
 
 	if (ctx->pos == 0 || nfs_attribute_cache_expired(inode))
 		res = nfs_revalidate_mapping(inode, file->f_mapping);
@@ -929,7 +873,7 @@ static int nfs_readdir(struct file *file, struct dir_context *ctx)
 		if (res == -EBADCOOKIE) {
 			res = 0;
 			/* This means either end of directory */
-			if (*desc->dir_cookie && !desc->eof) {
+			if (*desc->dir_cookie && desc->eof == 0) {
 				/* Or that the server has 'lost' a cookie */
 				res = uncached_readdir(desc);
 				if (res == 0)
@@ -941,16 +885,14 @@ static int nfs_readdir(struct file *file, struct dir_context *ctx)
 			clear_bit(NFS_INO_ADVISE_RDPLUS, &NFS_I(inode)->flags);
 			nfs_zap_caches(inode);
 			desc->page_index = 0;
-			desc->plus = 0;
-			desc->eof = 0;
+			desc->plus = false;
+			desc->eof = false;
 			continue;
 		}
 		if (res < 0)
 			break;
 
 		res = nfs_do_filldir(desc);
-		unlock_page(desc->page);
-		cache_page_release(desc);
 		if (res < 0)
 			break;
 	} while (!desc->eof);
@@ -1032,8 +974,6 @@ EXPORT_SYMBOL_GPL(nfs_force_lookup_revalidate);
 static int nfs_check_verifier(struct inode *dir, struct dentry *dentry,
 			      int rcu_walk)
 {
-	int ret;
-
 	if (IS_ROOT(dentry))
 		return 1;
 	if (NFS_SERVER(dir)->flags & NFS_MOUNT_LOOKUP_CACHE_NONE)
@@ -1041,12 +981,12 @@ static int nfs_check_verifier(struct inode *dir, struct dentry *dentry,
 	if (!nfs_verify_change_attribute(dir, dentry->d_time))
 		return 0;
 	/* Revalidate nfsi->cache_change_attribute before we declare a match */
-	if (rcu_walk)
-		ret = nfs_revalidate_inode_rcu(NFS_SERVER(dir), dir);
-	else
-		ret = nfs_revalidate_inode(NFS_SERVER(dir), dir);
-	if (ret < 0)
-		return 0;
+	if (nfs_mapping_need_revalidate_inode(dir)) {
+		if (rcu_walk)
+			return 0;
+		if (__nfs_revalidate_inode(NFS_SERVER(dir), dir) < 0)
+			return 0;
+	}
 	if (!nfs_verify_change_attribute(dir, dentry->d_time))
 		return 0;
 	return 1;
@@ -1158,7 +1098,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 				return -ECHILD;
 			goto out_bad;
 		}
-		goto out_valid_noent;
+		goto out_valid;
 	}
 
 	if (is_bad_inode(inode)) {
@@ -1183,6 +1123,7 @@ static int nfs_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 				goto out_zap_parent;
 			goto out_error;
 		}
+		nfs_advise_use_readdirplus(dir);
 		goto out_valid;
 	}
 
@@ -1220,12 +1161,12 @@ static int nfs_lookup_revalidate(struct dentry *dentry, unsigned int flags)
 	nfs_free_fhandle(fhandle);
 	nfs4_label_free(label);
 
+	/* set a readdirplus hint that we had a cache miss */
+	nfs_force_use_readdirplus(dir);
+
 out_set_verifier:
 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
  out_valid:
-	/* Success: notify readdir to use READDIRPLUS */
-	nfs_advise_use_readdirplus(dir);
- out_valid_noent:
 	if (flags & LOOKUP_RCU) {
 		if (parent != ACCESS_ONCE(dentry->d_parent))
 			return -ECHILD;
@@ -1280,8 +1221,8 @@ out_error:
  */
 static int nfs_weak_revalidate(struct dentry *dentry, unsigned int flags)
 {
-	int error;
 	struct inode *inode = d_inode(dentry);
+	int error = 0;
 
 	/*
 	 * I believe we can only get a negative dentry here in the case of a
@@ -1300,7 +1241,8 @@ static int nfs_weak_revalidate(struct dentry *dentry, unsigned int flags)
 		return 0;
 	}
 
-	error = nfs_lookup_verify_inode(inode, flags);
+	if (nfs_mapping_need_revalidate_inode(inode))
+		error = __nfs_revalidate_inode(NFS_SERVER(inode), inode);
 	dfprintk(LOOKUPCACHE, "NFS: %s: inode %lu is %s\n",
 			__func__, inode->i_ino, error ? "invalid" : "valid");
 	return !error;
@@ -1425,8 +1367,8 @@ struct dentry *nfs_lookup(struct inode *dir, struct dentry * dentry, unsigned in
 	if (IS_ERR(res))
 		goto out_label;
 
-	/* Success: notify readdir to use READDIRPLUS */
-	nfs_advise_use_readdirplus(dir);
+	/* Notify readdir to use READDIRPLUS */
+	nfs_force_use_readdirplus(dir);
 
 no_entry:
 	res = d_splice_alias(inode, dentry);
@@ -1451,7 +1393,6 @@ static int nfs4_lookup_revalidate(struct dentry *, unsigned int);
 
 const struct dentry_operations nfs4_dentry_operations = {
 	.d_revalidate	= nfs4_lookup_revalidate,
-	.d_weak_revalidate	= nfs_weak_revalidate,
 	.d_delete	= nfs_dentry_delete,
 	.d_iput		= nfs_dentry_iput,
 	.d_automount	= nfs_d_automount,
@@ -1469,9 +1410,9 @@ static fmode_t flags_to_mode(int flags)
 	return res;
 }
 
-static struct nfs_open_context *create_nfs_open_context(struct dentry *dentry, int open_flags)
+static struct nfs_open_context *create_nfs_open_context(struct dentry *dentry, int open_flags, struct file *filp)
 {
-	return alloc_nfs_open_context(dentry, flags_to_mode(open_flags));
+	return alloc_nfs_open_context(dentry, flags_to_mode(open_flags), filp);
 }
 
 static int do_open(struct inode *inode, struct file *filp)
@@ -1490,8 +1431,10 @@ static int nfs_finish_open(struct nfs_open_context *ctx,
 	err = finish_open(file, dentry, do_open, opened);
 	if (err)
 		goto out;
-	nfs_file_set_open_context(file, ctx);
-
+	if (S_ISREG(file->f_path.dentry->d_inode->i_mode))
+		nfs_file_set_open_context(file, ctx);
+	else
+		err = -ESTALE;
 out:
 	return err;
 }
@@ -1537,8 +1480,13 @@ int nfs_atomic_open(struct inode *dir, struct dentry *dentry,
 		return -ENAMETOOLONG;
 
 	if (open_flags & O_CREAT) {
+		struct nfs_server *server = NFS_SERVER(dir);
+
+		if (!(server->attr_bitmask[2] & FATTR4_WORD2_MODE_UMASK))
+			mode &= ~current_umask();
+
 		attr.ia_valid |= ATTR_MODE;
-		attr.ia_mode = mode & ~current_umask();
+		attr.ia_mode = mode;
 	}
 	if (open_flags & O_TRUNC) {
 		attr.ia_valid |= ATTR_SIZE;
@@ -1556,7 +1504,7 @@ int nfs_atomic_open(struct inode *dir, struct dentry *dentry,
 			return finish_no_open(file, dentry);
 	}
 
-	ctx = create_nfs_open_context(dentry, open_flags);
+	ctx = create_nfs_open_context(dentry, open_flags, file);
 	err = PTR_ERR(ctx);
 	if (IS_ERR(ctx))
 		goto out;
@@ -1570,7 +1518,7 @@ int nfs_atomic_open(struct inode *dir, struct dentry *dentry,
 		d_drop(dentry);
 		switch (err) {
 		case -ENOENT:
-			d_add(dentry, NULL);
+			d_splice_alias(NULL, dentry);
 			nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
 			break;
 		case -EISDIR:
@@ -2093,7 +2041,11 @@ int nfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	}
 
 	error = rpc_wait_for_completion_task(task);
-	if (error == 0)
+	if (error != 0) {
+		((struct nfs_renamedata *)task->tk_calldata)->cancelled = 1;
+		/* Paired with the atomic_dec_and_test() barrier in rpc_do_put_task() */
+		smp_wmb();
+	} else
 		error = task->tk_status;
 	rpc_put_task(task);
 	nfs_mark_for_revalidate(old_inode);
@@ -2105,8 +2057,14 @@ out:
 	if (!error) {
 		if (new_inode != NULL)
 			nfs_drop_nlink(new_inode);
+		/*
+		 * The d_move() should be here instead of in an async RPC completion
+		 * handler because we need the proper locks to move the dentry.  If
+		 * we're interrupted by a signal, the async RPC completion handler
+		 * should mark the directories for revalidation.
+		 */
 		d_move(old_dentry, new_dentry);
-		nfs_set_verifier(old_dentry,
+		nfs_set_verifier(new_dentry,
 					nfs_save_change_attribute(new_dir));
 	} else if (error == -ENOENT)
 		nfs_dentry_handle_enoent(old_dentry);
@@ -2288,8 +2246,7 @@ static int nfs_access_get_cached(struct inode *inode, struct rpc_cred *cred, str
 		if (cache == NULL)
 			goto out;
 		/* Found an entry, is our attribute cache valid? */
-		if (!nfs_attribute_cache_expired(inode) &&
-		    !(nfsi->cache_validity & NFS_INO_INVALID_ATTR))
+		if (!nfs_check_cache_invalid(inode, NFS_INO_INVALID_ACCESS))
 			break;
 		err = -ECHILD;
 		if (!may_block)
@@ -2303,7 +2260,6 @@ static int nfs_access_get_cached(struct inode *inode, struct rpc_cred *cred, str
 		spin_lock(&inode->i_lock);
 		retry = false;
 	}
-	res->jiffies = cache->jiffies;
 	res->cred = cache->cred;
 	res->mask = cache->mask;
 	list_move_tail(&cache->lru, &nfsi->access_cache_entry_lru);
@@ -2337,12 +2293,11 @@ static int nfs_access_get_cached_rcu(struct inode *inode, struct rpc_cred *cred,
 		cache = NULL;
 	if (cache == NULL)
 		goto out;
-	err = nfs_revalidate_inode_rcu(NFS_SERVER(inode), inode);
-	if (err)
+	if (nfs_check_cache_invalid(inode, NFS_INO_INVALID_ACCESS))
 		goto out;
-	res->jiffies = cache->jiffies;
 	res->cred = cache->cred;
 	res->mask = cache->mask;
+	err = 0;
 out:
 	rcu_read_unlock();
 	return err;
@@ -2387,7 +2342,6 @@ void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
 	if (cache == NULL)
 		return;
 	RB_CLEAR_NODE(&cache->rb_node);
-	cache->jiffies = set->jiffies;
 	cache->cred = get_rpccred(set->cred);
 	cache->mask = set->mask;
 
@@ -2415,16 +2369,40 @@ void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
 }
 EXPORT_SYMBOL_GPL(nfs_access_add_cache);
 
+#define NFS_MAY_READ (NFS4_ACCESS_READ)
+#define NFS_MAY_WRITE (NFS4_ACCESS_MODIFY | \
+		NFS4_ACCESS_EXTEND | \
+		NFS4_ACCESS_DELETE)
+#define NFS_FILE_MAY_WRITE (NFS4_ACCESS_MODIFY | \
+		NFS4_ACCESS_EXTEND)
+#define NFS_DIR_MAY_WRITE NFS_MAY_WRITE
+#define NFS_MAY_LOOKUP (NFS4_ACCESS_LOOKUP)
+#define NFS_MAY_EXECUTE (NFS4_ACCESS_EXECUTE)
+static int
+nfs_access_calc_mask(u32 access_result, umode_t umode)
+{
+	int mask = 0;
+
+	if (access_result & NFS_MAY_READ)
+		mask |= MAY_READ;
+	if (S_ISDIR(umode)) {
+		if ((access_result & NFS_DIR_MAY_WRITE) == NFS_DIR_MAY_WRITE)
+			mask |= MAY_WRITE;
+		if ((access_result & NFS_MAY_LOOKUP) == NFS_MAY_LOOKUP)
+			mask |= MAY_EXEC;
+	} else if (S_ISREG(umode)) {
+		if ((access_result & NFS_FILE_MAY_WRITE) == NFS_FILE_MAY_WRITE)
+			mask |= MAY_WRITE;
+		if ((access_result & NFS_MAY_EXECUTE) == NFS_MAY_EXECUTE)
+			mask |= MAY_EXEC;
+	} else if (access_result & NFS_MAY_WRITE)
+			mask |= MAY_WRITE;
+	return mask;
+}
+
 void nfs_access_set_mask(struct nfs_access_entry *entry, u32 access_result)
 {
-	entry->mask = 0;
-	if (access_result & NFS4_ACCESS_READ)
-		entry->mask |= MAY_READ;
-	if (access_result &
-	    (NFS4_ACCESS_MODIFY | NFS4_ACCESS_EXTEND | NFS4_ACCESS_DELETE))
-		entry->mask |= MAY_WRITE;
-	if (access_result & (NFS4_ACCESS_LOOKUP|NFS4_ACCESS_EXECUTE))
-		entry->mask |= MAY_EXEC;
+	entry->mask = access_result;
 }
 EXPORT_SYMBOL_GPL(nfs_access_set_mask);
 
@@ -2432,6 +2410,7 @@ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
 {
 	struct nfs_access_entry cache;
 	bool may_block = (mask & MAY_NOT_BLOCK) == 0;
+	int cache_mask;
 	int status;
 
 	trace_nfs_access_enter(inode);
@@ -2447,9 +2426,9 @@ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
 		goto out;
 
 	/* Be clever: ask server to check for all possible rights */
-	cache.mask = MAY_EXEC | MAY_WRITE | MAY_READ;
+	cache.mask = NFS_MAY_LOOKUP | NFS_MAY_EXECUTE
+		     | NFS_MAY_WRITE | NFS_MAY_READ;
 	cache.cred = cred;
-	cache.jiffies = jiffies;
 	status = NFS_PROTO(inode)->access(inode, &cache);
 	if (status != 0) {
 		if (status == -ESTALE) {
@@ -2461,7 +2440,8 @@ static int nfs_do_access(struct inode *inode, struct rpc_cred *cred, int mask)
 	}
 	nfs_access_add_cache(inode, &cache);
 out_cached:
-	if ((mask & ~cache.mask & (MAY_READ | MAY_WRITE | MAY_EXEC)) != 0)
+	cache_mask = nfs_access_calc_mask(cache.mask, inode->i_mode);
+	if ((mask & ~cache_mask & (MAY_READ | MAY_WRITE | MAY_EXEC)) != 0)
 		status = -EACCES;
 out:
 	trace_nfs_access_exit(inode, status);
@@ -2494,12 +2474,13 @@ EXPORT_SYMBOL_GPL(nfs_may_open);
 static int nfs_execute_ok(struct inode *inode, int mask)
 {
 	struct nfs_server *server = NFS_SERVER(inode);
-	int ret;
+	int ret = 0;
 
-	if (mask & MAY_NOT_BLOCK)
-		ret = nfs_revalidate_inode_rcu(server, inode);
-	else
-		ret = nfs_revalidate_inode(server, inode);
+	if (nfs_check_cache_invalid(inode, NFS_INO_INVALID_ACCESS)) {
+		if (mask & MAY_NOT_BLOCK)
+			return -ECHILD;
+		ret = __nfs_revalidate_inode(server, inode);
+	}
 	if (ret == 0 && !execute_ok(inode))
 		ret = -EACCES;
 	return ret;

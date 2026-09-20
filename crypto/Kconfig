@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Generic algorithms support
 #
@@ -24,7 +25,7 @@ comment "Crypto core or helper"
 config CRYPTO_FIPS
 	bool "FIPS 200 compliance"
 	depends on (CRYPTO_ANSI_CPRNG || CRYPTO_DRBG) && !CRYPTO_MANAGER_DISABLE_TESTS
-	depends on MODULE_SIG
+	depends on (MODULE_SIG || !MODULES)
 	help
 	  This options enables the fips boot option which is
 	  required if you want to system to operate in a FIPS 200
@@ -129,7 +130,8 @@ config CRYPTO_DH
 
 config CRYPTO_ECDH
 	tristate "ECDH algorithm"
-	select CRYPTO_KPP
+	select CRYTPO_KPP
+	select CRYPTO_RNG_DEFAULT
 	help
 	  Generic implementation of the ECDH algorithm
 
@@ -253,7 +255,7 @@ config CRYPTO_SIMD
 config CRYPTO_GLUE_HELPER_X86
 	tristate
 	depends on X86
-	select CRYPTO_ALGAPI
+	select CRYPTO_BLKCIPHER
 
 config CRYPTO_ENGINE
 	tristate
@@ -374,7 +376,7 @@ config CRYPTO_XTS
 	tristate "XTS support"
 	select CRYPTO_BLKCIPHER
 	select CRYPTO_MANAGER
-	select CRYPTO_GF128MUL
+	select CRYPTO_ECB
 	help
 	  XTS: IEEE1619/D16 narrow block cipher use with aes-xts-plain,
 	  key size 256, 384 or 512 bits. This implementation currently
@@ -452,7 +454,7 @@ config CRYPTO_CRC32C_INTEL
 	  gain performance compared with software implementation.
 	  Module will be crc32c-intel.
 
-config CRYPT_CRC32C_VPMSUM
+config CRYPTO_CRC32C_VPMSUM
 	tristate "CRC32c CRC algorithm (powerpc64)"
 	depends on PPC64 && ALTIVEC
 	select CRYPTO_HASH
@@ -511,6 +513,23 @@ config CRYPTO_CRCT10DIF_PCLMUL
 	  accelerated PCLMULQDQ instruction. This option will create
 	  'crct10dif-plcmul' module, which is faster when computing the
 	  crct10dif checksum as compared with the generic table implementation.
+
+config CRYPTO_CRCT10DIF_VPMSUM
+	tristate "CRC32T10DIF powerpc64 hardware acceleration"
+	depends on PPC64 && ALTIVEC && CRC_T10DIF
+	select CRYPTO_HASH
+	help
+	  CRC10T10DIF algorithm implemented using vector polynomial
+	  multiply-sum (vpmsum) instructions, introduced in POWER8. Enable on
+	  POWER8 and newer processors for improved performance.
+
+config CRYPTO_VPMSUM_TESTER
+	tristate "Powerpc64 vpmsum hardware acceleration tester"
+	depends on CRYPTO_CRCT10DIF_VPMSUM && CRYPTO_CRC32C_VPMSUM
+	help
+	  Stress test for CRC32c and CRC-T10DIF algorithms implemented with
+	  POWER8 vpmsum instructions.
+	  Unless you are testing these algorithms, you don't need this.
 
 config CRYPTO_GHASH
 	tristate "GHASH digest algorithm"
@@ -960,14 +979,13 @@ config CRYPTO_AES_X86_64
 config CRYPTO_AES_NI_INTEL
 	tristate "AES cipher algorithms (AES-NI)"
 	depends on X86
+	select CRYPTO_AEAD
 	select CRYPTO_AES_X86_64 if 64BIT
 	select CRYPTO_AES_586 if !64BIT
-	select CRYPTO_CRYPTD
-	select CRYPTO_ABLK_HELPER
 	select CRYPTO_ALGAPI
+	select CRYPTO_BLKCIPHER
 	select CRYPTO_GLUE_HELPER_X86 if 64BIT
-	select CRYPTO_LRW
-	select CRYPTO_XTS
+	select CRYPTO_SIMD
 	help
 	  Use Intel AES-NI instructions for AES algorithm.
 
@@ -1750,6 +1768,8 @@ config CRYPTO_USER_API_AEAD
 	tristate "User-space interface for AEAD cipher algorithms"
 	depends on NET
 	select CRYPTO_AEAD
+	select CRYPTO_BLKCIPHER
+	select CRYPTO_NULL
 	select CRYPTO_USER_API
 	help
 	  This option enables the user-spaces interface for AEAD

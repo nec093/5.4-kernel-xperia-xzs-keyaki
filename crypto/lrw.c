@@ -139,12 +139,7 @@ static inline int get_index128(be128 *block)
 		return x + ffz(val);
 	}
 
-	/*
-	 * If we get here, then x == 128 and we are incrementing the counter
-	 * from all ones to all zeros. This means we must return index 127, i.e.
-	 * the one corresponding to key2*{ 1,...,1 }.
-	 */
-	return 127;
+	return x;
 }
 
 static int post_crypt(struct skcipher_request *req)
@@ -350,6 +345,13 @@ static void encrypt_done(struct crypto_async_request *areq, int err)
 	struct rctx *rctx;
 
 	rctx = skcipher_request_ctx(req);
+
+	if (err == -EINPROGRESS) {
+		if (rctx->left != req->cryptlen)
+			return;
+		goto out;
+	}
+
 	subreq = &rctx->subreq;
 	subreq->base.flags &= CRYPTO_TFM_REQ_MAY_BACKLOG;
 
@@ -357,6 +359,7 @@ static void encrypt_done(struct crypto_async_request *areq, int err)
 	if (rctx->left)
 		return;
 
+out:
 	skcipher_request_complete(req, err);
 }
 
@@ -394,6 +397,13 @@ static void decrypt_done(struct crypto_async_request *areq, int err)
 	struct rctx *rctx;
 
 	rctx = skcipher_request_ctx(req);
+
+	if (err == -EINPROGRESS) {
+		if (rctx->left != req->cryptlen)
+			return;
+		goto out;
+	}
+
 	subreq = &rctx->subreq;
 	subreq->base.flags &= CRYPTO_TFM_REQ_MAY_BACKLOG;
 
@@ -401,6 +411,7 @@ static void decrypt_done(struct crypto_async_request *areq, int err)
 	if (rctx->left)
 		return;
 
+out:
 	skcipher_request_complete(req, err);
 }
 
@@ -515,7 +526,7 @@ static void exit_tfm(struct crypto_skcipher *tfm)
 	crypto_free_skcipher(ctx->child);
 }
 
-static void free_inst(struct skcipher_instance *inst)
+static void free(struct skcipher_instance *inst)
 {
 	crypto_drop_skcipher(skcipher_instance_ctx(inst));
 	kfree(inst);
@@ -624,7 +635,7 @@ static int create(struct crypto_template *tmpl, struct rtattr **tb)
 	inst->alg.encrypt = encrypt;
 	inst->alg.decrypt = decrypt;
 
-	inst->free = free_inst;
+	inst->free = free;
 
 	err = skcipher_register_instance(tmpl, inst);
 	if (err)

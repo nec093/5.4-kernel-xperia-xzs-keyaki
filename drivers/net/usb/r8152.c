@@ -791,11 +791,8 @@ int get_registers(struct r8152 *tp, u16 value, u16 index, u16 size, void *data)
 	ret = usb_control_msg(tp->udev, usb_rcvctrlpipe(tp->udev, 0),
 			      RTL8152_REQ_GET_REGS, RTL8152_REQT_READ,
 			      value, index, tmp, size, 500);
-	if (ret < 0)
-		memset(data, 0xff, size);
-	else
-		memcpy(data, tmp, size);
 
+	memcpy(data, tmp, size);
 	kfree(tmp);
 
 	return ret;
@@ -1812,7 +1809,7 @@ static int r8152_tx_agg_fill(struct r8152 *tp, struct tx_agg *agg)
 
 		tx_data += len;
 		agg->skb_len += len;
-		agg->skb_num += skb_shinfo(skb)->gso_segs ?: 1;
+		agg->skb_num++;
 
 		dev_kfree_skb_any(skb);
 
@@ -2063,8 +2060,8 @@ static int r8152_poll(struct napi_struct *napi, int budget)
 	bottom_half(tp);
 
 	if (work_done < budget) {
-		napi_complete_done(napi, work_done);
-
+		if (!napi_complete_done(napi, work_done))
+			goto out;
 		if (!list_empty(&tp->rx_done))
 			napi_schedule(napi);
 		else if (!skb_queue_empty(&tp->tx_queue) &&
@@ -2072,6 +2069,7 @@ static int r8152_poll(struct napi_struct *napi, int budget)
 			napi_schedule(napi);
 	}
 
+out:
 	return work_done;
 }
 
@@ -3980,8 +3978,7 @@ static int rtl8152_close(struct net_device *netdev)
 #ifdef CONFIG_PM_SLEEP
 	unregister_pm_notifier(&tp->pm_notifier);
 #endif
-	if (!test_bit(RTL8152_UNPLUG, &tp->flags))
-		napi_disable(&tp->napi);
+	napi_disable(&tp->napi);
 	clear_bit(WORK_ENABLE, &tp->flags);
 	usb_kill_urb(tp->intr_urb);
 	cancel_delayed_work_sync(&tp->schedule);
@@ -4078,6 +4075,8 @@ static void r8153_init(struct r8152 *tp)
 		if (test_bit(RTL8152_UNPLUG, &tp->flags))
 			break;
 	}
+
+	data = r8153_phy_status(tp, 0);
 
 	data = r8153_phy_status(tp, 0);
 
@@ -4194,10 +4193,7 @@ static void r8153b_init(struct r8152 *tp)
 		if (ocp_read_word(tp, MCU_TYPE_PLA, PLA_BOOT_CTRL) &
 		    AUTOLOAD_DONE)
 			break;
-
 		msleep(20);
-		if (test_bit(RTL8152_UNPLUG, &tp->flags))
-			break;
 	}
 
 	data = r8153_phy_status(tp, 0);
@@ -4525,9 +4521,6 @@ static int rtl8152_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 
 	if (!rtl_can_wakeup(tp))
 		return -EOPNOTSUPP;
-
-	if (wol->wolopts & ~WAKE_ANY)
-		return -EINVAL;
 
 	ret = usb_autopm_get_interface(tp->intf);
 	if (ret < 0)
@@ -4977,7 +4970,8 @@ static int rtl8152_change_mtu(struct net_device *dev, int new_mtu)
 	case RTL_VER_01:
 	case RTL_VER_02:
 	case RTL_VER_07:
-		return eth_change_mtu(dev, new_mtu);
+		dev->mtu = new_mtu;
+		return 0;
 	default:
 		break;
 	}
@@ -5198,9 +5192,6 @@ static int rtl8152_probe(struct usb_interface *intf,
 		return -ENODEV;
 	}
 
-	if (intf->cur_altsetting->desc.bNumEndpoints < 3)
-		return -ENODEV;
-
 	usb_reset_device(udev);
 	netdev = alloc_etherdev(sizeof(struct r8152));
 	if (!netdev) {
@@ -5265,6 +5256,18 @@ static int rtl8152_probe(struct usb_interface *intf,
 	netdev->ethtool_ops = &ops;
 	netif_set_gso_max_size(netdev, RTL_LIMITED_TSO_SIZE);
 
+	/* MTU range: 68 - 1500 or 9194 */
+	netdev->min_mtu = ETH_MIN_MTU;
+	switch (tp->version) {
+	case RTL_VER_01:
+	case RTL_VER_02:
+		netdev->max_mtu = ETH_DATA_LEN;
+		break;
+	default:
+		netdev->max_mtu = RTL8153_MAX_MTU;
+		break;
+	}
+
 	tp->mii.dev = netdev;
 	tp->mii.mdio_read = read_mii_word;
 	tp->mii.mdio_write = write_mii_word;
@@ -5277,11 +5280,6 @@ static int rtl8152_probe(struct usb_interface *intf,
 	tp->duplex = DUPLEX_FULL;
 
 	intf->needs_remote_wakeup = 1;
-
-	if (!rtl_can_wakeup(tp))
-		__rtl_set_wol(tp, 0);
-	else
-		tp->saved_wolopts = __rtl_get_wol(tp);
 
 	tp->rtl_ops.init(tp);
 	queue_delayed_work(system_long_wq, &tp->hw_phy_work, 0);
@@ -5296,6 +5294,10 @@ static int rtl8152_probe(struct usb_interface *intf,
 		goto out1;
 	}
 
+	if (!rtl_can_wakeup(tp))
+		__rtl_set_wol(tp, 0);
+
+	tp->saved_wolopts = __rtl_get_wol(tp);
 	if (tp->saved_wolopts)
 		device_set_wakeup_enable(&udev->dev, true);
 	else

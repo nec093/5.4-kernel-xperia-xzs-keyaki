@@ -150,10 +150,15 @@ int dwc3_host_init(struct dwc3 *dwc)
 	ret = platform_device_add(xhci);
 	if (ret) {
 		dev_err(dwc->dev, "failed to register xHCI device\n");
-		goto err1;
+		goto err2;
 	}
 
 	return 0;
+err2:
+	phy_remove_lookup(dwc->usb2_generic_phy, "usb2-phy",
+			  dev_name(dwc->dev));
+	phy_remove_lookup(dwc->usb3_generic_phy, "usb3-phy",
+			  dev_name(dwc->dev));
 err1:
 	platform_device_put(xhci);
 	return ret;

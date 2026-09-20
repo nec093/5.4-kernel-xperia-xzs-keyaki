@@ -5,7 +5,7 @@
  *
  * Copyright 2006-2010	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014 Intel Mobile Communications GmbH
- * Copyright 2015-2016	Intel Deutschland GmbH
+ * Copyright 2015-2017	Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -354,6 +354,34 @@ struct ieee80211_supported_band {
 	struct ieee80211_sta_vht_cap vht_cap;
 };
 
+/**
+ * wiphy_read_of_freq_limits - read frequency limits from device tree
+ *
+ * @wiphy: the wireless device to get extra limits for
+ *
+ * Some devices may have extra limitations specified in DT. This may be useful
+ * for chipsets that normally support more bands but are limited due to board
+ * design (e.g. by antennas or external power amplifier).
+ *
+ * This function reads info from DT and uses it to *modify* channels (disable
+ * unavailable ones). It's usually a *bad* idea to use it in drivers with
+ * shared channel data as DT limitations are device specific. You should make
+ * sure to call it only if channels in wiphy are copied and can be modified
+ * without affecting other devices.
+ *
+ * As this function access device node it has to be called after set_wiphy_dev.
+ * It also modifies channels so they have to be set first.
+ * If using this helper, call it before wiphy_register().
+ */
+#ifdef CONFIG_OF
+void wiphy_read_of_freq_limits(struct wiphy *wiphy);
+#else /* CONFIG_OF */
+static inline void wiphy_read_of_freq_limits(struct wiphy *wiphy)
+{
+}
+#endif /* !CONFIG_OF */
+
+
 /*
  * Wireless hardware/device configuration structures and methods
  */
@@ -378,6 +406,8 @@ struct ieee80211_supported_band {
 
 /**
  * struct vif_params - describes virtual interface parameters
+ * @flags: monitor interface flags, unchanged if 0, otherwise
+ *	%MONITOR_FLAG_CHANGED will be set
  * @use_4addr: use 4-address frames
  * @macaddr: address to use for this virtual interface.
  *	If this parameter is set to zero address the driver may
@@ -385,13 +415,17 @@ struct ieee80211_supported_band {
  *	This feature is only fully supported by drivers that enable the
  *	%NL80211_FEATURE_MAC_ON_CREATE flag.  Others may support creating
  **	only p2p devices with specified MAC.
- * @vht_mumimo_groups: MU-MIMO groupID. used for monitoring only
- *	 packets belonging to that MU-MIMO groupID.
+ * @vht_mumimo_groups: MU-MIMO groupID, used for monitoring MU-MIMO packets
+ *	belonging to that MU-MIMO groupID; %NULL if not changed
+ * @vht_mumimo_follow_addr: MU-MIMO follow address, used for monitoring
+ *	MU-MIMO packets going to the specified station; %NULL if not changed
  */
 struct vif_params {
+	u32 flags;
 	int use_4addr;
 	u8 macaddr[ETH_ALEN];
-	u8 vht_mumimo_groups[VHT_MUMIMO_GROUPS_DATA_LEN];
+	const u8 *vht_mumimo_groups;
+	const u8 *vht_mumimo_follow_addr;
 };
 
 /**
@@ -658,6 +692,7 @@ struct survey_info {
  * @wep_keys: static WEP keys, if not NULL points to an array of
  *	CFG80211_MAX_WEP_KEYS WEP keys
  * @wep_tx_key: key index (0..3) of the default TX static WEP key
+ * @psk: PSK (for devices supporting 4-way-handshake offload)
  */
 struct cfg80211_crypto_settings {
 	u32 wpa_versions;
@@ -671,6 +706,7 @@ struct cfg80211_crypto_settings {
 	bool control_port_no_encrypt;
 	struct key_params *wep_keys;
 	int wep_tx_key;
+	const u8 *psk;
 };
 
 /**
@@ -763,6 +799,10 @@ struct cfg80211_bitrate_mask {
  * @pbss: If set, start as a PCP instead of AP. Relevant for DMG
  *	networks.
  * @beacon_rate: bitrate to be used for beacons
+ * @ht_cap: HT capabilities (or %NULL if HT isn't enabled)
+ * @vht_cap: VHT capabilities (or %NULL if VHT isn't enabled)
+ * @ht_required: stations must support HT
+ * @vht_required: stations must support VHT
  */
 struct cfg80211_ap_settings {
 	struct cfg80211_chan_def chandef;
@@ -783,6 +823,10 @@ struct cfg80211_ap_settings {
 	const struct cfg80211_acl_data *acl;
 	bool pbss;
 	struct cfg80211_bitrate_mask beacon_rate;
+
+	const struct ieee80211_ht_cap *ht_cap;
+	const struct ieee80211_vht_cap *vht_cap;
+	bool ht_required, vht_required;
 };
 
 /**
@@ -1218,6 +1262,7 @@ static inline int cfg80211_get_station(struct net_device *dev,
  * Monitor interface configuration flags. Note that these must be the bits
  * according to the nl80211 flags.
  *
+ * @MONITOR_FLAG_CHANGED: set if the flags were changed
  * @MONITOR_FLAG_FCSFAIL: pass frames with bad FCS
  * @MONITOR_FLAG_PLCPFAIL: pass frames with bad PLCP
  * @MONITOR_FLAG_CONTROL: pass control frames
@@ -1226,6 +1271,7 @@ static inline int cfg80211_get_station(struct net_device *dev,
  * @MONITOR_FLAG_ACTIVE: active monitor, ACKs frames on its MAC address
  */
 enum monitor_flags {
+	MONITOR_FLAG_CHANGED		= 1<<__NL80211_MNTR_FLAG_INVALID,
 	MONITOR_FLAG_FCSFAIL		= 1<<NL80211_MNTR_FLAG_FCSFAIL,
 	MONITOR_FLAG_PLCPFAIL		= 1<<NL80211_MNTR_FLAG_PLCPFAIL,
 	MONITOR_FLAG_CONTROL		= 1<<NL80211_MNTR_FLAG_CONTROL,
@@ -1440,6 +1486,9 @@ struct mesh_config {
  * @mcast_rate: multicat rate for Mesh Node [6Mbps is the default for 802.11a]
  * @basic_rates: basic rates to use when creating the mesh
  * @beacon_rate: bitrate to be used for beacons
+ * @userspace_handles_dfs: whether user space controls DFS operation, i.e.
+ *	changes the channel when a radar is detected. This is required
+ *	to operate on DFS channels.
  *
  * These parameters are fixed when the mesh is created.
  */
@@ -1461,6 +1510,7 @@ struct mesh_setup {
 	int mcast_rate[NUM_NL80211_BANDS];
 	u32 basic_rates;
 	struct cfg80211_bitrate_mask beacon_rate;
+	bool userspace_handles_dfs;
 };
 
 /**
@@ -1612,11 +1662,15 @@ static inline void get_random_mask_addr(u8 *buf, const u8 *addr, const u8 *mask)
 /**
  * struct cfg80211_match_set - sets of attributes to match
  *
- * @ssid: SSID to be matched; may be zero-length for no match (RSSI only)
+ * @ssid: SSID to be matched; may be zero-length in case of BSSID match
+ *	or no match (RSSI only)
+ * @bssid: BSSID to be matched; may be all-zero BSSID in case of SSID match
+ *	or no match (RSSI only)
  * @rssi_thold: don't report scan results below this threshold (in s32 dBm)
  */
 struct cfg80211_match_set {
 	struct cfg80211_ssid ssid;
+	u8 bssid[ETH_ALEN];
 	s32 rssi_thold;
 };
 
@@ -1648,6 +1702,7 @@ struct cfg80211_bss_select_adjust {
 /**
  * struct cfg80211_sched_scan_request - scheduled scan request description
  *
+ * @reqid: identifies this request.
  * @ssids: SSIDs to scan for (passed in the probe_reqs in active scans)
  * @n_ssids: number of SSIDs
  * @n_channels: total number of channels to scan
@@ -1660,6 +1715,7 @@ struct cfg80211_bss_select_adjust {
  * 	(others are filtered out).
  *	If ommited, all results are passed.
  * @n_match_sets: number of match sets
+ * @report_results: indicates that results were reported for this request
  * @wiphy: the wiphy this was for
  * @dev: the interface
  * @scan_start: start time of the scheduled scan
@@ -1676,6 +1732,8 @@ struct cfg80211_bss_select_adjust {
  * @rcu_head: RCU callback used to free the struct
  * @owner_nlportid: netlink portid of owner (if this should is a request
  *	owned by a particular socket)
+ * @nl_owner_dead: netlink owner socket was closed - this request be freed
+ * @list: for keeping list of requests.
  * @delay: delay in seconds to use before starting the first scan
  *	cycle.  The driver may ignore this parameter and start
  *	immediately (or at any other time), if this feature is not
@@ -1692,6 +1750,7 @@ struct cfg80211_bss_select_adjust {
  *	comparisions.
  */
 struct cfg80211_sched_scan_request {
+	u64 reqid;
 	struct cfg80211_ssid *ssids;
 	int n_ssids;
 	u32 n_channels;
@@ -1717,8 +1776,11 @@ struct cfg80211_sched_scan_request {
 	struct wiphy *wiphy;
 	struct net_device *dev;
 	unsigned long scan_start;
+	bool report_results;
 	struct rcu_head rcu_head;
 	u32 owner_nlportid;
+	bool nl_owner_dead;
+	struct list_head list;
 
 	/* keep last */
 	struct ieee80211_channel *channels[0];
@@ -1968,7 +2030,7 @@ struct cfg80211_deauth_request {
  * struct cfg80211_disassoc_request - Disassociation request data
  *
  * This structure provides information needed to complete IEEE 802.11
- * disassocation.
+ * disassociation.
  *
  * @bss: the BSS to disassociate from
  * @ie: Extra IEs to add to Disassociation frame or %NULL
@@ -2106,6 +2168,8 @@ struct cfg80211_bss_selection {
  * @fils_erp_rrk: ERP re-authentication Root Key (rRK) used to derive additional
  *	keys in FILS or %NULL if not specified.
  * @fils_erp_rrk_len: Length of @fils_erp_rrk in octets.
+ * @want_1x: indicates user-space supports and wants to use 802.1X driver
+ *	offload of 4-way handshake.
  */
 struct cfg80211_connect_params {
 	struct ieee80211_channel *channel;
@@ -2138,6 +2202,7 @@ struct cfg80211_connect_params {
 	u16 fils_erp_next_seq_num;
 	const u8 *fils_erp_rrk;
 	size_t fils_erp_rrk_len;
+	bool want_1x;
 };
 
 /**
@@ -2478,11 +2543,13 @@ struct cfg80211_qos_map {
  * This struct defines NAN configuration parameters
  *
  * @master_pref: master preference (1 - 255)
- * @dual: dual band operation mode, see &enum nl80211_nan_dual_band_conf
+ * @bands: operating bands, a bitmap of &enum nl80211_band values.
+ *	For instance, for NL80211_BAND_2GHZ, bit 0 would be set
+ *	(i.e. BIT(NL80211_BAND_2GHZ)).
  */
 struct cfg80211_nan_conf {
 	u8 master_pref;
-	u8 dual;
+	u8 bands;
 };
 
 /**
@@ -2490,11 +2557,11 @@ struct cfg80211_nan_conf {
  * configuration
  *
  * @CFG80211_NAN_CONF_CHANGED_PREF: master preference
- * @CFG80211_NAN_CONF_CHANGED_DUAL: dual band operation
+ * @CFG80211_NAN_CONF_CHANGED_BANDS: operating bands
  */
 enum cfg80211_nan_conf_changes {
 	CFG80211_NAN_CONF_CHANGED_PREF = BIT(0),
-	CFG80211_NAN_CONF_CHANGED_DUAL = BIT(1),
+	CFG80211_NAN_CONF_CHANGED_BANDS = BIT(1),
 };
 
 /**
@@ -2589,6 +2656,23 @@ struct cfg80211_external_auth_params {
 	struct cfg80211_ssid ssid;
 	unsigned int key_mgmt_suite;
 	u16 status;
+};
+
+/**
+ * struct cfg80211_pmk_conf - PMK configuration
+ *
+ * @aa: authenticator address
+ * @pmk_len: PMK length in bytes.
+ * @pmk: the PMK material
+ * @pmk_r0_name: PMK-R0 Name. NULL if not applicable (i.e., the PMK
+ *	is not PMK-R0). When pmk_r0_name is not NULL, the pmk field
+ *	holds PMK-R0.
+ */
+struct cfg80211_pmk_conf {
+	const u8 *aa;
+	u8 pmk_len;
+	const u8 *pmk;
+	const u8 *pmk_r0_name;
 };
 
 /**
@@ -2729,9 +2813,11 @@ struct cfg80211_external_auth_params {
  *	BSS, i.e., this impacts only subsequent (re)associations. The bits in
  *	changed are defined in &enum cfg80211_connect_params_changed.
  *	(invoked with the wireless_dev mutex held)
- * @disconnect: Disconnect from the BSS/ESS. Once done, call
- *	cfg80211_disconnected().
- *	(invoked with the wireless_dev mutex held)
+ * @disconnect: Disconnect from the BSS/ESS or stop connection attempts if
+ *      connection is in progress. Once done, call cfg80211_disconnected() in
+ *      case connection was already established (invoked with the
+ *      wireless_dev mutex held), otherwise call cfg80211_connect_timeout().
+ *
  * @join_ibss: Join the specified IBSS (or create if necessary). Once done, call
  *	cfg80211_ibss_joined(), also call that function when changing BSSID due
  *	to a merge.
@@ -2796,15 +2882,20 @@ struct cfg80211_external_auth_params {
  *	the current level is above/below the configured threshold; this may
  *	need some care when the configuration is changed (without first being
  *	disabled.)
+ * @set_cqm_rssi_range_config: Configure two RSSI thresholds in the
+ *	connection quality monitor.  An event is to be sent only when the
+ *	signal level is found to be outside the two values.  The driver should
+ *	set %NL80211_EXT_FEATURE_CQM_RSSI_LIST if this method is implemented.
+ *	If it is provided then there's no point providing @set_cqm_rssi_config.
  * @set_cqm_txe_config: Configure connection quality monitor TX error
  *	thresholds.
  * @sched_scan_start: Tell the driver to start a scheduled scan.
- * @sched_scan_stop: Tell the driver to stop an ongoing scheduled scan. This
- *	call must stop the scheduled scan and be ready for starting a new one
- *	before it returns, i.e. @sched_scan_start may be called immediately
- *	after that again and should not fail in that case. The driver should
- *	not call cfg80211_sched_scan_stopped() for a requested stop (when this
- *	method returns 0.)
+ * @sched_scan_stop: Tell the driver to stop an ongoing scheduled scan with
+ *	given request id. This call must stop the scheduled scan and be ready
+ *	for starting a new one before it returns, i.e. @sched_scan_start may be
+ *	called immediately after that again and should not fail in that case.
+ *	The driver should not call cfg80211_sched_scan_stopped() for a requested
+ *	stop (when this method returns 0).
  *
  * @mgmt_frame_register: Notify driver that a management frame type was
  *	registered. The callback is allowed to sleep.
@@ -2903,6 +2994,12 @@ struct cfg80211_external_auth_params {
  *
  * @external_auth: indicates result of offloaded authentication processing from
  *     user space
+ * @set_pmk: configure the PMK to be used for offloaded 802.1X 4-Way handshake.
+ *	If not deleted through @del_pmk the PMK remains valid until disconnect
+ *	upon which the driver should clear it.
+ *	(invoked with the wireless_dev mutex held)
+ * @del_pmk: delete the previously configured PMK for the given authenticator.
+ *	(invoked with the wireless_dev mutex held)
  */
 struct cfg80211_ops {
 	int	(*suspend)(struct wiphy *wiphy, struct cfg80211_wowlan *wow);
@@ -2913,13 +3010,12 @@ struct cfg80211_ops {
 						  const char *name,
 						  unsigned char name_assign_type,
 						  enum nl80211_iftype type,
-						  u32 *flags,
 						  struct vif_params *params);
 	int	(*del_virtual_intf)(struct wiphy *wiphy,
 				    struct wireless_dev *wdev);
 	int	(*change_virtual_intf)(struct wiphy *wiphy,
 				       struct net_device *dev,
-				       enum nl80211_iftype type, u32 *flags,
+				       enum nl80211_iftype type,
 				       struct vif_params *params);
 
 	int	(*add_key)(struct wiphy *wiphy, struct net_device *netdev,
@@ -3088,6 +3184,10 @@ struct cfg80211_ops {
 				       struct net_device *dev,
 				       s32 rssi_thold, u32 rssi_hyst);
 
+	int	(*set_cqm_rssi_range_config)(struct wiphy *wiphy,
+					     struct net_device *dev,
+					     s32 rssi_low, s32 rssi_high);
+
 	int	(*set_cqm_txe_config)(struct wiphy *wiphy,
 				      struct net_device *dev,
 				      u32 rate, u32 pkts, u32 intvl);
@@ -3102,7 +3202,8 @@ struct cfg80211_ops {
 	int	(*sched_scan_start)(struct wiphy *wiphy,
 				struct net_device *dev,
 				struct cfg80211_sched_scan_request *request);
-	int	(*sched_scan_stop)(struct wiphy *wiphy, struct net_device *dev);
+	int	(*sched_scan_stop)(struct wiphy *wiphy, struct net_device *dev,
+				   u64 reqid);
 
 	int	(*set_rekey_data)(struct wiphy *wiphy, struct net_device *dev,
 				  struct cfg80211_gtk_rekey_data *data);
@@ -3189,6 +3290,11 @@ struct cfg80211_ops {
 					    const bool enabled);
 	int     (*external_auth)(struct wiphy *wiphy, struct net_device *dev,
 				 struct cfg80211_external_auth_params *params);
+
+	int	(*set_pmk)(struct wiphy *wiphy, struct net_device *dev,
+			   const struct cfg80211_pmk_conf *conf);
+	int	(*del_pmk)(struct wiphy *wiphy, struct net_device *dev,
+			   const u8 *aa);
 };
 
 /*
@@ -3250,7 +3356,7 @@ enum wiphy_flags {
 	WIPHY_FLAG_CONTROL_PORT_PROTOCOL	= BIT(7),
 	WIPHY_FLAG_IBSS_RSN			= BIT(8),
 	WIPHY_FLAG_MESH_AUTH			= BIT(10),
-	WIPHY_FLAG_SUPPORTS_SCHED_SCAN		= BIT(11),
+	/* use hole at 11 */
 	/* use hole at 12 */
 	WIPHY_FLAG_SUPPORTS_FW_ROAM		= BIT(13),
 	WIPHY_FLAG_AP_UAPSD			= BIT(14),
@@ -3353,13 +3459,60 @@ struct ieee80211_iface_limit {
  *
  */
 struct ieee80211_iface_combination {
+	/**
+	 * @limits:
+	 * limits for the given interface types
+	 */
 	const struct ieee80211_iface_limit *limits;
+
+	/**
+	 * @num_different_channels:
+	 * can use up to this many different channels
+	 */
 	u32 num_different_channels;
+
+	/**
+	 * @max_interfaces:
+	 * maximum number of interfaces in total allowed in this group
+	 */
 	u16 max_interfaces;
+
+	/**
+	 * @n_limits:
+	 * number of limitations
+	 */
 	u8 n_limits;
+
+	/**
+	 * @beacon_int_infra_match:
+	 * In this combination, the beacon intervals between infrastructure
+	 * and AP types must match. This is required only in special cases.
+	 */
 	bool beacon_int_infra_match;
+
+	/**
+	 * @radar_detect_widths:
+	 * bitmap of channel widths supported for radar detection
+	 */
 	u8 radar_detect_widths;
+
+	/**
+	 * @radar_detect_regions:
+	 * bitmap of regions supported for radar detection
+	 */
 	u8 radar_detect_regions;
+
+	/**
+	 * @beacon_int_min_gcd:
+	 * This interface combination supports different beacon intervals.
+	 *
+	 * = 0
+	 *   all beacon intervals for different interface must be same.
+	 * > 0
+	 *   any beacon interval for the interface part of this combination AND
+	 *   GCD of all beacon intervals from beaconing interfaces of this
+	 *   combination must be greater or equal to this value.
+	 */
 	u32 beacon_int_min_gcd;
 };
 
@@ -3558,6 +3711,8 @@ struct wiphy_iftype_ext_capab {
  *	this variable determines its size
  * @max_scan_ssids: maximum number of SSIDs the device can scan for in
  *	any given scan
+ * @max_sched_scan_reqs: maximum number of scheduled scan requests that
+ *	the device can run concurrently.
  * @max_sched_scan_ssids: maximum number of SSIDs the device can scan
  *	for in any given scheduled scan
  * @max_match_sets: maximum number of match sets the device can handle
@@ -3658,6 +3813,10 @@ struct wiphy_iftype_ext_capab {
  *	attribute indices defined in &enum nl80211_bss_select_attr.
  *
  * @cookie_counter: unique generic cookie counter, used to identify objects.
+ * @nan_supported_bands: bands supported by the device in NAN mode, a
+ *	bitmap of &enum nl80211_band values.  For instance, for
+ *	NL80211_BAND_2GHZ, bit 0 would be set
+ *	(i.e. BIT(NL80211_BAND_2GHZ)).
  */
 struct wiphy {
 	/* assign these fields before you register the wiphy */
@@ -3690,6 +3849,7 @@ struct wiphy {
 
 	int bss_priv_size;
 	u8 max_scan_ssids;
+	u8 max_sched_scan_reqs;
 	u8 max_sched_scan_ssids;
 	u8 max_match_sets;
 	u16 max_scan_ie_len;
@@ -3788,6 +3948,8 @@ struct wiphy {
 	u32 bss_select_support;
 
 	u64 cookie_counter;
+
+	u8 nan_supported_bands;
 
 	char priv[0] __aligned(NETDEV_ALIGN);
 };
@@ -3925,6 +4087,7 @@ void wiphy_free(struct wiphy *wiphy);
 struct cfg80211_conn;
 struct cfg80211_internal_bss;
 struct cfg80211_cached_keys;
+struct cfg80211_cqm_config;
 
 /**
  * struct wireless_dev - wireless device state
@@ -3968,8 +4131,8 @@ struct cfg80211_cached_keys;
  * @beacon_interval: beacon interval used on this device for transmitting
  *	beacons, 0 when not valid
  * @address: The address for this device, valid only if @netdev is %NULL
- * @p2p_started: true if this is a P2P Device that has been started
- * @nan_started: true if this is a NAN interface that has been started
+ * @is_running: true if this is a non-netdev device that has been started, e.g.
+ *	the P2P Device.
  * @cac_started: true if DFS channel availability check has been started
  * @cac_start_time: timestamp (jiffies) when the dfs state was entered.
  * @cac_time_ms: CAC time in ms
@@ -3988,6 +4151,8 @@ struct cfg80211_cached_keys;
  * @event_list: (private) list for internal event processing
  * @event_lock: (private) lock for event list
  * @owner_nlportid: (private) owner socket port ID
+ * @nl_owner_dead: (private) owner socket went away
+ * @cqm_config: (private) nl80211 RSSI monitor state
  */
 struct wireless_dev {
 	struct wiphy *wiphy;
@@ -4004,7 +4169,7 @@ struct wireless_dev {
 
 	struct mutex mtx;
 
-	bool use_4addr, p2p_started, nan_started;
+	bool use_4addr, is_running;
 
 	u8 address[ETH_ALEN] __aligned(sizeof(u16));
 
@@ -4036,11 +4201,12 @@ struct wireless_dev {
 
 	u32 ap_unexpected_nlportid;
 
+	u32 owner_nlportid;
+	bool nl_owner_dead;
+
 	bool cac_started;
 	unsigned long cac_start_time;
 	unsigned int cac_time_ms;
-
-	u32 owner_nlportid;
 
 #ifdef CONFIG_CFG80211_WEXT
 	/* wext data */
@@ -4056,6 +4222,8 @@ struct wireless_dev {
 		bool prev_bssid_valid;
 	} wext;
 #endif
+
+	struct cfg80211_cqm_config *cqm_config;
 };
 
 static inline u8 *wdev_address(struct wireless_dev *wdev)
@@ -4063,6 +4231,13 @@ static inline u8 *wdev_address(struct wireless_dev *wdev)
 	if (wdev->netdev)
 		return wdev->netdev->dev_addr;
 	return wdev->address;
+}
+
+static inline bool wdev_running(struct wireless_dev *wdev)
+{
+	if (wdev->netdev)
+		return netif_running(wdev->netdev);
+	return wdev->is_running;
 }
 
 /**
@@ -4098,26 +4273,15 @@ int ieee80211_channel_to_frequency(int chan, enum nl80211_band band);
  */
 int ieee80211_frequency_to_channel(int freq);
 
-/*
- * Name indirection necessary because the ieee80211 code also has
- * a function named "ieee80211_get_channel", so if you include
- * cfg80211's header file you get cfg80211's version, if you try
- * to include both header files you'll (rightfully!) get a symbol
- * clash.
- */
-struct ieee80211_channel *__ieee80211_get_channel(struct wiphy *wiphy,
-						  int freq);
 /**
  * ieee80211_get_channel - get channel struct from wiphy for specified frequency
+ *
  * @wiphy: the struct wiphy to get the channel for
  * @freq: the center frequency of the channel
+ *
  * Return: The channel struct from @wiphy at @freq.
  */
-static inline struct ieee80211_channel *
-ieee80211_get_channel(struct wiphy *wiphy, int freq)
-{
-	return __ieee80211_get_channel(wiphy, freq);
-}
+struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq);
 
 /**
  * ieee80211_get_response_rate - get basic rate for a given rate
@@ -4373,6 +4537,27 @@ static inline const u8 *cfg80211_find_ie(u8 eid, const u8 *ies, int len)
 }
 
 /**
+ * cfg80211_find_ext_ie - find information element with EID Extension in data
+ *
+ * @ext_eid: element ID Extension
+ * @ies: data consisting of IEs
+ * @len: length of data
+ *
+ * Return: %NULL if the extended element ID could not be found or if
+ * the element is invalid (claims to be longer than the given
+ * data), or a pointer to the first byte of the requested
+ * element, that is the byte containing the element ID.
+ *
+ * Note: There are no checks on the element length other than
+ * having to fit into the given data.
+ */
+static inline const u8 *cfg80211_find_ext_ie(u8 ext_eid, const u8 *ies, int len)
+{
+	return cfg80211_find_ie_match(WLAN_EID_EXTENSION, ies, len,
+				      &ext_eid, 1, 2);
+}
+
+/**
  * cfg80211_find_vendor_ie - find vendor specific information element in data
  *
  * @oui: vendor OUI
@@ -4390,17 +4575,6 @@ static inline const u8 *cfg80211_find_ie(u8 eid, const u8 *ies, int len)
  */
 const u8 *cfg80211_find_vendor_ie(unsigned int oui, int oui_type,
 				  const u8 *ies, int len);
-
-/**
- * cfg80211_send_layer2_update - send layer 2 update frame
- *
- * @dev: network device
- * @addr: STA MAC address
- *
- * Wireless drivers can use this function to update forwarding tables in bridge
- * devices upon STA association.
- */
-void cfg80211_send_layer2_update(struct net_device *dev, const u8 *addr);
 
 /**
  * DOC: Regulatory enforcement infrastructure
@@ -4555,31 +4729,34 @@ void cfg80211_scan_done(struct cfg80211_scan_request *request,
  * cfg80211_sched_scan_results - notify that new scan results are available
  *
  * @wiphy: the wiphy which got scheduled scan results
+ * @reqid: identifier for the related scheduled scan request
  */
-void cfg80211_sched_scan_results(struct wiphy *wiphy);
+void cfg80211_sched_scan_results(struct wiphy *wiphy, u64 reqid);
 
 /**
  * cfg80211_sched_scan_stopped - notify that the scheduled scan has stopped
  *
  * @wiphy: the wiphy on which the scheduled scan stopped
+ * @reqid: identifier for the related scheduled scan request
  *
  * The driver can call this function to inform cfg80211 that the
  * scheduled scan had to be stopped, for whatever reason.  The driver
  * is then called back via the sched_scan_stop operation when done.
  */
-void cfg80211_sched_scan_stopped(struct wiphy *wiphy);
+void cfg80211_sched_scan_stopped(struct wiphy *wiphy, u64 reqid);
 
 /**
  * cfg80211_sched_scan_stopped_rtnl - notify that the scheduled scan has stopped
  *
  * @wiphy: the wiphy on which the scheduled scan stopped
+ * @reqid: identifier for the related scheduled scan request
  *
  * The driver can call this function to inform cfg80211 that the
  * scheduled scan had to be stopped, for whatever reason.  The driver
  * is then called back via the sched_scan_stop operation when done.
  * This function should be called with rtnl locked.
  */
-void cfg80211_sched_scan_stopped_rtnl(struct wiphy *wiphy);
+void cfg80211_sched_scan_stopped_rtnl(struct wiphy *wiphy, u64 reqid);
 
 /**
  * cfg80211_inform_bss_frame_data - inform cfg80211 of a received BSS frame
@@ -4712,12 +4889,22 @@ cfg80211_inform_bss(struct wiphy *wiphy,
 					gfp);
 }
 
+/**
+ * cfg80211_get_bss - get a BSS reference
+ * @wiphy: the wiphy this BSS struct belongs to
+ * @channel: the channel to search on (or %NULL)
+ * @bssid: the desired BSSID (or %NULL)
+ * @ssid: the desired SSID (or %NULL)
+ * @ssid_len: length of the SSID (or 0)
+ * @bss_type: type of BSS, see &enum ieee80211_bss_type
+ * @privacy: privacy filter, see &enum ieee80211_privacy
+ */
 struct cfg80211_bss *cfg80211_get_bss(struct wiphy *wiphy,
 				      struct ieee80211_channel *channel,
 				      const u8 *bssid,
 				      const u8 *ssid, size_t ssid_len,
 				      enum ieee80211_bss_type bss_type,
-				      enum ieee80211_privacy);
+				      enum ieee80211_privacy privacy);
 static inline struct cfg80211_bss *
 cfg80211_get_ibss(struct wiphy *wiphy,
 		  struct ieee80211_channel *channel,
@@ -4809,7 +4996,8 @@ void cfg80211_auth_timeout(struct net_device *dev, const u8 *addr);
  *	moves to cfg80211 in this call
  * @buf: authentication frame (header + body)
  * @len: length of the frame data
- * @uapsd_queues: bitmap of ACs configured to uapsd. -1 if n/a.
+ * @uapsd_queues: bitmap of queues configured for uapsd. Same format
+ *	as the AC bitmap in the QoS info field
  *
  * After being asked to associate via cfg80211_ops::assoc() the driver must
  * call either this function or cfg80211_auth_timeout().
@@ -5550,6 +5738,7 @@ void cfg80211_mgmt_tx_status(struct wireless_dev *wdev, u64 cookie,
  * cfg80211_cqm_rssi_notify - connection quality monitoring rssi event
  * @dev: network device
  * @rssi_event: the triggered RSSI event
+ * @rssi_level: new RSSI level value or 0 if not available
  * @gfp: context flags
  *
  * This function is called when a configured connection quality monitoring
@@ -5557,7 +5746,7 @@ void cfg80211_mgmt_tx_status(struct wireless_dev *wdev, u64 cookie,
  */
 void cfg80211_cqm_rssi_notify(struct net_device *dev,
 			      enum nl80211_cqm_rssi_threshold_event rssi_event,
-			      gfp_t gfp);
+			      s32 rssi_level, gfp_t gfp);
 
 /**
  * cfg80211_cqm_pktloss_notify - notify userspace about packetloss to peer

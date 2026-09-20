@@ -1271,6 +1271,8 @@ static int __clk_notify(struct clk_core *core, unsigned long msg,
 			cnd.clk = cn->clk;
 			ret = srcu_notifier_call_chain(&cn->notifier_head, msg,
 					&cnd);
+			if (ret & NOTIFY_STOP_MASK)
+				return ret;
 		}
 	}
 
@@ -2280,9 +2282,6 @@ static int clk_core_get_phase(struct clk_core *core)
 	int ret;
 
 	clk_prepare_lock();
-	/* Always try to update cached phase if possible */
-	if (core->ops->get_phase)
-		core->phase = core->ops->get_phase(core->hw);
 	ret = core->phase;
 	clk_prepare_unlock();
 
@@ -2513,11 +2512,11 @@ static void clk_dump_subtree(struct seq_file *s, struct clk_core *c, int level)
 	clk_dump_one(s, c, level);
 
 	hlist_for_each_entry(child, &c->children, child_node) {
-		seq_printf(s, ",");
+		seq_putc(s, ',');
 		clk_dump_subtree(s, child, level + 1);
 	}
 
-	seq_printf(s, "}");
+	seq_putc(s, '}');
 }
 
 static int clk_dump(struct seq_file *s, void *data)
@@ -2526,14 +2525,13 @@ static int clk_dump(struct seq_file *s, void *data)
 	bool first_node = true;
 	struct hlist_head **lists = (struct hlist_head **)s->private;
 
-	seq_printf(s, "{");
-
+	seq_putc(s, '{');
 	clk_prepare_lock();
 
 	for (; *lists; lists++) {
 		hlist_for_each_entry(c, *lists, child_node) {
 			if (!first_node)
-				seq_puts(s, ",");
+				seq_putc(s, ',');
 			first_node = false;
 			clk_dump_subtree(s, c, 0);
 		}
@@ -2901,6 +2899,30 @@ static const struct file_operations rate_max_fops = {
 	.release	= seq_release,
 };
 
+static int possible_parents_dump(struct seq_file *s, void *data)
+{
+	struct clk_core *core = s->private;
+	int i;
+
+	for (i = 0; i < core->num_parents - 1; i++)
+		seq_printf(s, "%s ", core->parent_names[i]);
+
+	seq_printf(s, "%s\n", core->parent_names[i]);
+
+	return 0;
+}
+
+static int possible_parents_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, possible_parents_dump, inode->i_private);
+}
+
+static const struct file_operations possible_parents_fops = {
+	.open		= possible_parents_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 static int clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 {
 	struct dentry *d;
@@ -2972,6 +2994,12 @@ static int clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 	if (!d)
 		goto err_out;
 
+	if (core->num_parents > 1) {
+		d = debugfs_create_file("clk_possible_parents", S_IRUGO,
+				core->dentry, core, &possible_parents_fops);
+		if (!d)
+			goto err_out;
+	}
 	if (core->ops->debug_init) {
 		ret = core->ops->debug_init(core->hw, core->dentry);
 		if (ret)
@@ -3266,27 +3294,6 @@ static int __clk_core_init(struct clk_core *core)
 	core->rate = core->req_rate = rate;
 
 	/*
-	 * Enable CLK_IS_CRITICAL clocks so newly added critical clocks
-	 * don't get accidentally disabled when walking the orphan tree and
-	 * reparenting clocks
-	 */
-	if (core->flags & CLK_IS_CRITICAL) {
-		unsigned long flags;
-
-		ret = clk_core_prepare(core);
-		if (ret)
-			goto out;
-
-		flags = clk_enable_lock();
-		ret = clk_core_enable(core);
-		clk_enable_unlock(flags);
-		if (ret) {
-			clk_core_unprepare(core);
-			goto out;
-		}
-	}
-
-	/*
 	 * walk the list of orphan clocks and reparent any that newly finds a
 	 * parent.
 	 */
@@ -3294,13 +3301,10 @@ static int __clk_core_init(struct clk_core *core)
 		struct clk_core *parent = __clk_init_parent(orphan);
 
 		/*
-		 * We need to use __clk_set_parent_before() and _after() to
-		 * to properly migrate any prepare/enable count of the orphan
-		 * clock. This is important for CLK_IS_CRITICAL clocks, which
-		 * are enabled during init but might not have a parent yet.
+		 * we could call __clk_set_parent, but that would result in a
+		 * redundant call to the .set_rate op, if it exists
 		 */
 		if (parent) {
-			/* update the clk tree topology */
 			__clk_set_parent_before(orphan, parent);
 			__clk_set_parent_after(orphan, parent, NULL);
 			__clk_recalc_accuracies(orphan);
@@ -3350,6 +3354,15 @@ static int __clk_core_init(struct clk_core *core)
 		}
 	}
 
+	if (core->flags & CLK_IS_CRITICAL) {
+		unsigned long flags;
+
+		clk_core_prepare(core);
+
+		flags = clk_enable_lock();
+		clk_core_enable(core);
+		clk_enable_unlock(flags);
+	}
 	kref_init(&core->ref);
 out:
 	clk_prepare_unlock();
@@ -3375,7 +3388,7 @@ struct clk *__clk_create_clk(struct clk_hw *hw, const char *dev_id,
 
 	clk->core = hw->core;
 	clk->dev_id = dev_id;
-	clk->con_id = con_id;
+	clk->con_id = kstrdup_const(con_id, GFP_KERNEL);
 	clk->max_rate = ULONG_MAX;
 
 	clk_prepare_lock();
@@ -3391,6 +3404,7 @@ void __clk_free_clk(struct clk *clk)
 	hlist_del(&clk->clks_node);
 	clk_prepare_unlock();
 
+	kfree_const(clk->con_id);
 	kfree(clk);
 }
 
@@ -3985,7 +3999,7 @@ int clk_notifier_register(struct clk *clk, struct notifier_block *nb)
 
 	/* if clk wasn't in the notifier list, allocate new clk_notifier */
 	if (cn->clk != clk) {
-		cn = kzalloc(sizeof(struct clk_notifier), GFP_KERNEL);
+		cn = kzalloc(sizeof(*cn), GFP_KERNEL);
 		if (!cn)
 			goto out;
 
@@ -4160,7 +4174,7 @@ int of_clk_add_provider(struct device_node *np,
 	struct of_clk_provider *cp;
 	int ret;
 
-	cp = kzalloc(sizeof(struct of_clk_provider), GFP_KERNEL);
+	cp = kzalloc(sizeof(*cp), GFP_KERNEL);
 	if (!cp)
 		return -ENOMEM;
 
@@ -4171,7 +4185,7 @@ int of_clk_add_provider(struct device_node *np,
 	mutex_lock(&of_clk_mutex);
 	list_add(&cp->link, &of_clk_providers);
 	mutex_unlock(&of_clk_mutex);
-	pr_debug("Added clock from %s\n", np->full_name);
+	pr_debug("Added clock from %pOF\n", np);
 
 	ret = of_clk_set_defaults(np, true);
 	if (ret < 0)
@@ -4206,7 +4220,7 @@ int of_clk_add_hw_provider(struct device_node *np,
 	mutex_lock(&of_clk_mutex);
 	list_add(&cp->link, &of_clk_providers);
 	mutex_unlock(&of_clk_mutex);
-	pr_debug("Added clk_hw provider from %s\n", np->full_name);
+	pr_debug("Added clk_hw provider from %pOF\n", np);
 
 	ret = of_clk_set_defaults(np, true);
 	if (ret < 0)

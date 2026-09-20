@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_STRING_H_
 #define _LINUX_STRING_H_
 
@@ -27,7 +28,7 @@ extern char * strncpy(char *,const char *, __kernel_size_t);
 size_t strlcpy(char *, const char *, size_t);
 #endif
 #ifndef __HAVE_ARCH_STRSCPY
-ssize_t strscpy(char *, const char *, size_t);
+ssize_t __must_check strscpy(char *, const char *, size_t);
 #endif
 #ifndef __HAVE_ARCH_STRCAT
 extern char * strcat(char *, const char *);
@@ -99,6 +100,36 @@ extern __kernel_size_t strcspn(const char *,const char *);
 #ifndef __HAVE_ARCH_MEMSET
 extern void * memset(void *,int,__kernel_size_t);
 #endif
+
+#ifndef __HAVE_ARCH_MEMSET16
+extern void *memset16(uint16_t *, uint16_t, __kernel_size_t);
+#endif
+
+#ifndef __HAVE_ARCH_MEMSET32
+extern void *memset32(uint32_t *, uint32_t, __kernel_size_t);
+#endif
+
+#ifndef __HAVE_ARCH_MEMSET64
+extern void *memset64(uint64_t *, uint64_t, __kernel_size_t);
+#endif
+
+static inline void *memset_l(unsigned long *p, unsigned long v,
+		__kernel_size_t n)
+{
+	if (BITS_PER_LONG == 32)
+		return memset32((uint32_t *)p, v, n);
+	else
+		return memset64((uint64_t *)p, v, n);
+}
+
+static inline void *memset_p(void **p, void *v, __kernel_size_t n)
+{
+	if (BITS_PER_LONG == 32)
+		return memset32((uint32_t *)p, (uintptr_t)v, n);
+	else
+		return memset64((uint64_t *)p, (uintptr_t)v, n);
+}
+
 #ifndef __HAVE_ARCH_MEMCPY
 extern void * memcpy(void *,const void *,__kernel_size_t);
 #endif
@@ -111,11 +142,22 @@ extern void * memscan(void *,int,__kernel_size_t);
 #ifndef __HAVE_ARCH_MEMCMP
 extern int memcmp(const void *,const void *,__kernel_size_t);
 #endif
-#ifndef __HAVE_ARCH_BCMP
-extern int bcmp(const void *,const void *,__kernel_size_t);
-#endif
 #ifndef __HAVE_ARCH_MEMCHR
 extern void * memchr(const void *,int,__kernel_size_t);
+#endif
+#ifndef __HAVE_ARCH_MEMCPY_MCSAFE
+static inline __must_check int memcpy_mcsafe(void *dst, const void *src,
+		size_t cnt)
+{
+	memcpy(dst, src, cnt);
+	return 0;
+}
+#endif
+#ifndef __HAVE_ARCH_MEMCPY_FLUSHCACHE
+static inline void memcpy_flushcache(void *dst, const void *src, size_t cnt)
+{
+	memcpy(dst, src, cnt);
+}
 #endif
 void *memchr_inv(const void *s, int c, size_t n);
 char *strreplace(char *s, char old, char new);
@@ -187,16 +229,10 @@ static inline const char *kbasename(const char *path)
 #define __RENAME(x) __asm__(#x)
 
 void fortify_panic(const char *name) __noreturn __cold;
-
-#ifdef CONFIG_FORTIFY_COMPILE_CHECK
 void __read_overflow(void) __compiletime_error("detected read beyond size of object passed as 1st parameter");
 void __read_overflow2(void) __compiletime_error("detected read beyond size of object passed as 2nd parameter");
+void __read_overflow3(void) __compiletime_error("detected read beyond size of object passed as 3rd parameter");
 void __write_overflow(void) __compiletime_error("detected write beyond size of object passed as 1st parameter");
-#else
-#define __read_overflow(void) do { } while (0)
-#define __read_overflow2(void) do { } while (0)
-#define __write_overflow(void) do { } while (0)
-#endif
 
 #if !defined(__NO_FORTIFY) && defined(__OPTIMIZE__) && defined(CONFIG_FORTIFY_SOURCE)
 __FORTIFY_INLINE char *strncpy(char *p, const char *q, __kernel_size_t size)
@@ -390,5 +426,23 @@ __FORTIFY_INLINE char *strcpy(char *p, const char *q)
 }
 
 #endif
+
+/**
+ * memcpy_and_pad - Copy one buffer to another with padding
+ * @dest: Where to copy to
+ * @dest_len: The destination buffer size
+ * @src: Where to copy from
+ * @count: The number of bytes to copy
+ * @pad: Character to use for padding if space is left in destination.
+ */
+static inline void memcpy_and_pad(void *dest, size_t dest_len,
+				  const void *src, size_t count, int pad)
+{
+	if (dest_len > count) {
+		memcpy(dest, src, count);
+		memset(dest + count, pad,  dest_len - count);
+	} else
+		memcpy(dest, src, dest_len);
+}
 
 #endif /* _LINUX_STRING_H_ */

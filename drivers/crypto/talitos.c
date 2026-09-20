@@ -590,7 +590,7 @@ static void talitos_error(struct device *dev, u32 isr, u32 isr_lo)
 		if (v_lo & TALITOS_CCPSR_LO_MDTE)
 			dev_err(dev, "master data transfer error\n");
 		if (v_lo & TALITOS_CCPSR_LO_SGDLZ)
-			dev_err(dev, is_sec1 ? "pointeur not complete error\n"
+			dev_err(dev, is_sec1 ? "pointer not complete error\n"
 					     : "s/g data length zero error\n");
 		if (v_lo & TALITOS_CCPSR_LO_FPZ)
 			dev_err(dev, is_sec1 ? "parity error\n"
@@ -1523,6 +1523,11 @@ static int ablkcipher_setkey(struct crypto_ablkcipher *cipher,
 		     CRYPTO_TFM_REQ_WEAK_KEY) &&
 	    !des_ekey(tmp, key)) {
 		crypto_ablkcipher_set_flags(cipher, CRYPTO_TFM_RES_WEAK_KEY);
+		return -EINVAL;
+	}
+
+	if (keylen > TALITOS_MAX_KEY_SIZE) {
+		crypto_ablkcipher_set_flags(cipher, CRYPTO_TFM_RES_BAD_KEY_LEN);
 		return -EINVAL;
 	}
 

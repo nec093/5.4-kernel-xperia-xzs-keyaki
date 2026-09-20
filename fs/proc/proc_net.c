@@ -8,7 +8,7 @@
  *  proc net directory handling functions
  */
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <linux/errno.h>
 #include <linux/time.h>
@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/sched.h>
+#include <linux/sched/task.h>
 #include <linux/module.h>
 #include <linux/bitops.h>
 #include <linux/mount.h>
@@ -195,7 +196,7 @@ static __net_init int proc_net_ns_init(struct net *net)
 	if (!netd)
 		goto out;
 
-	netd->subdir = RB_ROOT;
+	netd->subdir = RB_ROOT_CACHED;
 	netd->data = net;
 	netd->nlink = 2;
 	netd->namelen = 3;

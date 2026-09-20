@@ -438,6 +438,7 @@ static int snd_usb_audio_dev_free(struct snd_device *device)
 static int snd_usb_audio_create(struct usb_interface *intf,
 				struct usb_device *dev, int idx,
 				const struct snd_usb_audio_quirk *quirk,
+				unsigned int usb_id,
 				struct snd_usb_audio **rchip)
 {
 	struct snd_card *card;
@@ -488,8 +489,7 @@ static int snd_usb_audio_create(struct usb_interface *intf,
 	atomic_set(&chip->usage_count, 0);
 	atomic_set(&chip->shutdown, 0);
 
-	chip->usb_id = USB_ID(le16_to_cpu(dev->descriptor.idVendor),
-			      le16_to_cpu(dev->descriptor.idProduct));
+	chip->usb_id = usb_id;
 	INIT_LIST_HEAD(&chip->pcm_list);
 	INIT_LIST_HEAD(&chip->ep_list);
 	INIT_LIST_HEAD(&chip->midi_list);
@@ -593,7 +593,7 @@ static bool get_alias_id(struct usb_device *dev, unsigned int *id)
 	return false;
 }
 
-static struct usb_device_id usb_audio_ids[]; /* defined below */
+static const struct usb_device_id usb_audio_ids[]; /* defined below */
 
 /* look for the corresponding quirk */
 static const struct snd_usb_audio_quirk *
@@ -685,7 +685,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 			    (vid[i] == -1 || vid[i] == USB_ID_VENDOR(id)) &&
 			    (pid[i] == -1 || pid[i] == USB_ID_PRODUCT(id))) {
 				err = snd_usb_audio_create(intf, dev, i, quirk,
-							   &chip);
+							   id, &chip);
 				if (err < 0)
 					goto __error;
 				chip->pm_intf = intf;
@@ -742,12 +742,9 @@ static int usb_audio_probe(struct usb_interface *intf,
 
  __error:
 	if (chip) {
-		/* chip->active is inside the chip->card object,
-		 * decrement before memory is possibly returned.
-		 */
-		atomic_dec(&chip->active);
 		if (!chip->num_interfaces)
 			snd_card_free(chip->card);
+		atomic_dec(&chip->active);
 	}
 	mutex_unlock(&register_mutex);
 	return err;
@@ -869,6 +866,9 @@ static int usb_audio_suspend(struct usb_interface *intf, pm_message_t message)
 	if (chip == (void *)-1L)
 		return 0;
 
+	chip->autosuspended = !!PMSG_IS_AUTO(message);
+	if (!chip->autosuspended)
+		snd_power_change_state(chip->card, SNDRV_CTL_POWER_D3hot);
 	if (!chip->num_suspended_intf++) {
 		list_for_each_entry(as, &chip->pcm_list, list) {
 			snd_pcm_suspend_all(as->pcm);
@@ -879,11 +879,6 @@ static int usb_audio_suspend(struct usb_interface *intf, pm_message_t message)
 			snd_usbmidi_suspend(p);
 		list_for_each_entry(mixer, &chip->mixer_list, list)
 			snd_usb_mixer_suspend(mixer);
-	}
-
-	if (!PMSG_IS_AUTO(message) && !chip->system_suspend) {
-		snd_power_change_state(chip->card, SNDRV_CTL_POWER_D3hot);
-		chip->system_suspend = chip->num_suspended_intf;
 	}
 
 	return 0;
@@ -898,11 +893,10 @@ static int __usb_audio_resume(struct usb_interface *intf, bool reset_resume)
 
 	if (chip == (void *)-1L)
 		return 0;
+	if (--chip->num_suspended_intf)
+		return 0;
 
 	atomic_inc(&chip->active); /* avoid autopm */
-	if (chip->num_suspended_intf > 1)
-		goto out;
-
 	/*
 	 * ALSA leaves material resumption to user space
 	 * we just notify and restart the mixers
@@ -917,12 +911,9 @@ static int __usb_audio_resume(struct usb_interface *intf, bool reset_resume)
 		snd_usbmidi_resume(p);
 	}
 
- out:
-	if (chip->num_suspended_intf == chip->system_suspend) {
+	if (!chip->autosuspended)
 		snd_power_change_state(chip->card, SNDRV_CTL_POWER_D0);
-		chip->system_suspend = 0;
-	}
-	chip->num_suspended_intf--;
+	chip->autosuspended = 0;
 
 err_out:
 	atomic_dec(&chip->active); /* allow autopm after this point */
@@ -944,7 +935,7 @@ static int usb_audio_reset_resume(struct usb_interface *intf)
 #define usb_audio_reset_resume	NULL
 #endif		/* CONFIG_PM */
 
-static struct usb_device_id usb_audio_ids [] = {
+static const struct usb_device_id usb_audio_ids [] = {
 #include "quirks-table.h"
     { .match_flags = (USB_DEVICE_ID_MATCH_INT_CLASS | USB_DEVICE_ID_MATCH_INT_SUBCLASS),
       .bInterfaceClass = USB_CLASS_AUDIO,

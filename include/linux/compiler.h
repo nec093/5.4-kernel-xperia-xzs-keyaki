@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_COMPILER_H
 #define __LINUX_COMPILER_H
 
@@ -17,17 +18,17 @@
 # define __release(x)	__context__(x,-1)
 # define __cond_lock(x,c)	((c) ? ({ __acquire(x); 1; }) : 0)
 # define __percpu	__attribute__((noderef, address_space(3)))
-#ifdef CONFIG_SPARSE_RCU_POINTER
 # define __rcu		__attribute__((noderef, address_space(4)))
-#else /* CONFIG_SPARSE_RCU_POINTER */
-# define __rcu
-#endif /* CONFIG_SPARSE_RCU_POINTER */
 # define __private	__attribute__((noderef))
 extern void __chk_user_ptr(const volatile void __user *);
 extern void __chk_io_ptr(const volatile void __iomem *);
 # define ACCESS_PRIVATE(p, member) (*((typeof((p)->member) __force *) &(p)->member))
 #else /* __CHECKER__ */
-# define __user
+# ifdef STRUCTLEAK_PLUGIN
+#  define __user __attribute__((user))
+# else
+#  define __user
+# endif
 # define __kernel
 # define __safe
 # define __force
@@ -53,22 +54,6 @@ extern void __chk_io_ptr(const volatile void __iomem *);
 #define __PASTE(a,b) ___PASTE(a,b)
 
 #ifdef __KERNEL__
-
-/*
- * Minimal backport of compiler_attributes.h to add support for __copy
- * to v4.9.y so that we can use it in init/exit_module to avoid
- * -Werror=missing-attributes errors on GCC 9.
- */
-#ifndef __has_attribute
-# define __has_attribute(x) __GCC4_has_attribute_##x
-# define __GCC4_has_attribute___copy__                0
-#endif
-
-#if __has_attribute(__copy__)
-# define __copy(symbol)                 __attribute__((__copy__(symbol)))
-#else
-# define __copy(symbol)
-#endif
 
 #ifdef __GNUC__
 #include <linux/compiler-gcc.h>
@@ -117,29 +102,36 @@ struct ftrace_branch_data {
 	};
 };
 
+struct ftrace_likely_data {
+	struct ftrace_branch_data	data;
+	unsigned long			constant;
+};
+
 /*
  * Note: DISABLE_BRANCH_PROFILING can be used by special lowlevel code
  * to disable branch tracing on a per file basis.
  */
 #if defined(CONFIG_TRACE_BRANCH_PROFILING) \
     && !defined(DISABLE_BRANCH_PROFILING) && !defined(__CHECKER__)
-void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
+void ftrace_likely_update(struct ftrace_likely_data *f, int val,
+			  int expect, int is_constant);
 
 #define likely_notrace(x)	__builtin_expect(!!(x), 1)
 #define unlikely_notrace(x)	__builtin_expect(!!(x), 0)
 
-#define __branch_check__(x, expect) ({					\
-			long ______r;					\
-			static struct ftrace_branch_data		\
+#define __branch_check__(x, expect, is_constant) ({			\
+			int ______r;					\
+			static struct ftrace_likely_data		\
 				__attribute__((__aligned__(4)))		\
 				__attribute__((section("_ftrace_annotated_branch"))) \
 				______f = {				\
-				.func = __func__,			\
-				.file = __FILE__,			\
-				.line = __LINE__,			\
+				.data.func = __func__,			\
+				.data.file = __FILE__,			\
+				.data.line = __LINE__,			\
 			};						\
-			______r = likely_notrace(x);			\
-			ftrace_likely_update(&______f, ______r, expect); \
+			______r = __builtin_expect(!!(x), expect);	\
+			ftrace_likely_update(&______f, ______r,		\
+					     expect, is_constant);	\
 			______r;					\
 		})
 
@@ -149,10 +141,10 @@ void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
  * written by Daniel Walker.
  */
 # ifndef likely
-#  define likely(x)	(__builtin_constant_p(x) ? !!(x) : __branch_check__(x, 1))
+#  define likely(x)	(__branch_check__(x, 1, __builtin_constant_p(x)))
 # endif
 # ifndef unlikely
-#  define unlikely(x)	(__builtin_constant_p(x) ? !!(x) : __branch_check__(x, 0))
+#  define unlikely(x)	(__branch_check__(x, 0, __builtin_constant_p(x)))
 # endif
 
 #ifdef CONFIG_PROFILE_ALL_BRANCHES
@@ -193,14 +185,35 @@ void ftrace_likely_update(struct ftrace_branch_data *f, int val, int expect);
 # define barrier_data(ptr) barrier()
 #endif
 
-/* workaround for GCC PR82365 if needed */
-#ifndef barrier_before_unreachable
-# define barrier_before_unreachable() do { } while (0)
+/* Unreachable code */
+#ifdef CONFIG_STACK_VALIDATION
+#define annotate_reachable() ({						\
+	asm("%c0:\n\t"							\
+	    ".pushsection .discard.reachable\n\t"			\
+	    ".long %c0b - .\n\t"					\
+	    ".popsection\n\t" : : "i" (__COUNTER__));			\
+})
+#define annotate_unreachable() ({					\
+	asm("%c0:\n\t"							\
+	    ".pushsection .discard.unreachable\n\t"			\
+	    ".long %c0b - .\n\t"					\
+	    ".popsection\n\t" : : "i" (__COUNTER__));			\
+})
+#define ASM_UNREACHABLE							\
+	"999:\n\t"							\
+	".pushsection .discard.unreachable\n\t"				\
+	".long 999b - .\n\t"						\
+	".popsection\n\t"
+#else
+#define annotate_reachable()
+#define annotate_unreachable()
 #endif
 
-/* Unreachable code */
+#ifndef ASM_UNREACHABLE
+# define ASM_UNREACHABLE
+#endif
 #ifndef unreachable
-# define unreachable() do { } while (1)
+# define unreachable() do { annotate_reachable(); do { } while (1); } while (0)
 #endif
 
 /*
@@ -266,21 +279,23 @@ void __read_once_size(const volatile void *p, void *res, int size)
 
 #ifdef CONFIG_KASAN
 /*
- * We can't declare function 'inline' because __no_sanitize_address confilcts
+ * This function is not 'inline' because __no_sanitize_address confilcts
  * with inlining. Attempt to inline it may cause a build failure.
  * 	https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368
  * '__maybe_unused' allows us to avoid defined-but-not-used warnings.
  */
-# define __no_kasan_or_inline __no_sanitize_address __maybe_unused
-#else
-# define __no_kasan_or_inline __always_inline
-#endif
-
-static __no_kasan_or_inline
+static __no_sanitize_address __maybe_unused
 void __read_once_size_nocheck(const volatile void *p, void *res, int size)
 {
 	__READ_ONCE_SIZE;
 }
+#else
+static __always_inline
+void __read_once_size_nocheck(const volatile void *p, void *res, int size)
+{
+	__READ_ONCE_SIZE;
+}
+#endif
 
 static __always_inline void __write_once_size(volatile void *p, void *res, int size)
 {
@@ -318,7 +333,6 @@ static __always_inline void __write_once_size(volatile void *p, void *res, int s
  * with an explicit memory barrier or atomic instruction that provides the
  * required ordering.
  */
-#include <linux/kasan-checks.h>
 
 #define __READ_ONCE(x, check)						\
 ({									\
@@ -336,13 +350,6 @@ static __always_inline void __write_once_size(volatile void *p, void *res, int s
  * to hide memory access from KASAN.
  */
 #define READ_ONCE_NOCHECK(x) __READ_ONCE(x, 0)
-
-static __no_kasan_or_inline
-unsigned long read_word_at_a_time(const void *addr)
-{
-	kasan_check_read(addr, 1);
-	return *(unsigned long *)addr;
-}
 
 #define WRITE_ONCE(x, val) \
 ({							\
@@ -456,8 +463,25 @@ unsigned long read_word_at_a_time(const void *addr)
 # define __attribute_const__	/* unimplemented */
 #endif
 
+#ifndef __designated_init
+# define __designated_init
+#endif
+
 #ifndef __latent_entropy
 # define __latent_entropy
+#endif
+
+#ifndef __randomize_layout
+# define __randomize_layout __designated_init
+#endif
+
+#ifndef __no_randomize_layout
+# define __no_randomize_layout
+#endif
+
+#ifndef randomized_struct_fields_start
+# define randomized_struct_fields_start
+# define randomized_struct_fields_end
 #endif
 
 /*
@@ -476,6 +500,10 @@ unsigned long read_word_at_a_time(const void *addr)
 
 #ifndef __visible
 #define __visible
+#endif
+
+#ifndef __nostackprotector
+# define __nostackprotector
 #endif
 
 #ifndef __norecordmcount
@@ -508,10 +536,6 @@ unsigned long read_word_at_a_time(const void *addr)
 # define __native_word(t) (sizeof(t) == sizeof(char) || sizeof(t) == sizeof(short) || sizeof(t) == sizeof(int) || sizeof(t) == sizeof(long))
 #endif
 
-#ifndef __optimize
-# define __optimize(level)
-#endif
-
 /* Compile time object size, -1 for unknown */
 #ifndef __compiletime_object_size
 # define __compiletime_object_size(obj) -1
@@ -536,7 +560,8 @@ unsigned long read_word_at_a_time(const void *addr)
 # define __compiletime_error_fallback(condition) do { } while (0)
 #endif
 
-#define __compiletime_assert(condition, msg, prefix, suffix)		\
+#ifdef __OPTIMIZE__
+# define __compiletime_assert(condition, msg, prefix, suffix)		\
 	do {								\
 		bool __cond = !(condition);				\
 		extern void prefix ## suffix(void) __compiletime_error(msg); \
@@ -544,6 +569,9 @@ unsigned long read_word_at_a_time(const void *addr)
 			prefix ## suffix();				\
 		__compiletime_error_fallback(__cond);			\
 	} while (0)
+#else
+# define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
+#endif
 
 #define _compiletime_assert(condition, msg, prefix, suffix) \
 	__compiletime_assert(condition, msg, prefix, suffix)
@@ -558,7 +586,7 @@ unsigned long read_word_at_a_time(const void *addr)
  * compiler has support to do so.
  */
 #define compiletime_assert(condition, msg) \
-	_compiletime_assert(condition, msg, __compiletime_assert_, __COUNTER__)
+	_compiletime_assert(condition, msg, __compiletime_assert_, __LINE__)
 
 #define compiletime_assert_atomic_type(t)				\
 	compiletime_assert(__native_word(t),				\
@@ -608,20 +636,5 @@ unsigned long read_word_at_a_time(const void *addr)
 	smp_read_barrier_depends(); /* Dependency order vs. p above. */ \
 	(_________p1); \
 })
-
-/* Ignore/forbid kprobes attach on very low level functions marked by this attribute: */
-#ifdef CONFIG_KPROBES
-# define __kprobes	__attribute__((__section__(".kprobes.text")))
-# define nokprobe_inline	__always_inline
-#else
-# define __kprobes
-# define nokprobe_inline	inline
-#endif
-
-/*
- * This is needed in functions which generate the stack canary, see
- * arch/x86/kernel/smpboot.c::start_secondary() for an example.
- */
-#define prevent_tail_call_optimization()	mb()
 
 #endif /* __LINUX_COMPILER_H */

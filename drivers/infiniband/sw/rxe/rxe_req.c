@@ -32,6 +32,7 @@
  */
 
 #include <linux/skbuff.h>
+#include <crypto/hash.h>
 
 #include "rxe.h"
 #include "rxe_loc.h"
@@ -42,7 +43,7 @@ static int next_opcode(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 
 static inline void retry_first_write_send(struct rxe_qp *qp,
 					  struct rxe_send_wqe *wqe,
-					  unsigned mask, int npsn)
+					  unsigned int mask, int npsn)
 {
 	int i;
 
@@ -71,6 +72,9 @@ static void req_retry(struct rxe_qp *qp)
 	unsigned int mask;
 	int npsn;
 	int first = 1;
+
+	wqe = queue_head(qp->sq.queue);
+	npsn = (qp->comp.psn - wqe->first_psn) & BTH_PSN_MASK;
 
 	qp->req.wqe_index	= consumer_index(qp->sq.queue);
 	qp->req.psn		= qp->comp.psn;
@@ -103,17 +107,11 @@ static void req_retry(struct rxe_qp *qp)
 		if (first) {
 			first = 0;
 
-			if (mask & WR_WRITE_OR_SEND_MASK) {
-				npsn = (qp->comp.psn - wqe->first_psn) &
-					BTH_PSN_MASK;
+			if (mask & WR_WRITE_OR_SEND_MASK)
 				retry_first_write_send(qp, wqe, mask, npsn);
-			}
 
-			if (mask & WR_READ_MASK) {
-				npsn = (wqe->dma.length - wqe->dma.resid) /
-					qp->mtu;
+			if (mask & WR_READ_MASK)
 				wqe->iova += npsn * qp->mtu;
-			}
 		}
 
 		wqe->state = wqe_state_posted;
@@ -364,19 +362,14 @@ static inline int check_init_depth(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 	return -EAGAIN;
 }
 
-static inline int get_mtu(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
+static inline int get_mtu(struct rxe_qp *qp)
 {
 	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
-	struct rxe_port *port;
-	struct rxe_av *av;
 
 	if ((qp_type(qp) == IB_QPT_RC) || (qp_type(qp) == IB_QPT_UC))
 		return qp->mtu;
 
-	av = &wqe->av;
-	port = &rxe->port;
-
-	return port->mtu_cap;
+	return rxe->port.mtu_cap;
 }
 
 static struct sk_buff *init_req_packet(struct rxe_qp *qp,
@@ -412,7 +405,7 @@ static struct sk_buff *init_req_packet(struct rxe_qp *qp,
 
 	/* init skb */
 	av = rxe_get_av(pkt);
-	skb = rxe->ifc_ops->init_packet(rxe, av, paylen, pkt);
+	skb = rxe_init_packet(rxe, av, paylen, pkt);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -442,7 +435,7 @@ static struct sk_buff *init_req_packet(struct rxe_qp *qp,
 	if (pkt->mask & RXE_RETH_MASK) {
 		reth_set_rkey(pkt, ibwr->wr.rdma.rkey);
 		reth_set_va(pkt, wqe->iova);
-		reth_set_len(pkt, wqe->dma.resid);
+		reth_set_len(pkt, wqe->dma.length);
 	}
 
 	if (pkt->mask & RXE_IMMDT_MASK)
@@ -483,7 +476,7 @@ static int fill_packet(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 	u32 *p;
 	int err;
 
-	err = rxe->ifc_ops->prepare(rxe, pkt, skb, &crc);
+	err = rxe_prepare(rxe, pkt, skb, &crc);
 	if (err)
 		return err;
 
@@ -491,8 +484,7 @@ static int fill_packet(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 		if (wqe->wr.send_flags & IB_SEND_INLINE) {
 			u8 *tmp = &wqe->dma.inline_data[wqe->dma.sge_offset];
 
-			crc = crc32_le(crc, tmp, paylen);
-
+			crc = rxe_crc32(rxe, crc, tmp, paylen);
 			memcpy(payload_addr(pkt), tmp, paylen);
 
 			wqe->dma.resid -= paylen;
@@ -599,9 +591,18 @@ int rxe_requester(void *arg)
 	struct rxe_send_wqe rollback_wqe;
 	u32 rollback_psn;
 
+	rxe_add_ref(qp);
+
 next_wqe:
-	if (unlikely(!qp->valid || qp->req.state == QP_STATE_ERROR))
+	if (unlikely(!qp->valid)) {
+		rxe_drain_req_pkts(qp, true);
 		goto exit;
+	}
+
+	if (unlikely(qp->req.state == QP_STATE_ERROR)) {
+		rxe_drain_req_pkts(qp, true);
+		goto exit;
+	}
 
 	if (unlikely(qp->req.state == QP_STATE_RESET)) {
 		qp->req.wqe_index = consumer_index(qp->sq.queue);
@@ -646,15 +647,11 @@ next_wqe:
 			rmr->access = wqe->wr.wr.reg.access;
 			rmr->lkey = wqe->wr.wr.reg.key;
 			rmr->rkey = wqe->wr.wr.reg.key;
-			rmr->iova = wqe->wr.wr.reg.mr->iova;
 			wqe->state = wqe_state_done;
 			wqe->status = IB_WC_SUCCESS;
 		} else {
 			goto exit;
 		}
-		if ((wqe->wr.send_flags & IB_SEND_SIGNALED) ||
-		    qp->sq_sig_type == IB_SIGNAL_ALL_WR)
-			rxe_run_task(&qp->comp.task, 1);
 		qp->req.wqe_index = next_index(qp->sq.queue,
 						qp->req.wqe_index);
 		goto next_wqe;
@@ -685,7 +682,7 @@ next_wqe:
 			goto exit;
 	}
 
-	mtu = get_mtu(qp, wqe);
+	mtu = get_mtu(qp);
 	payload = (mask & RXE_WRITE_OR_SEND) ? wqe->dma.resid : 0;
 	if (payload > mtu) {
 		if (qp_type(qp) == IB_QPT_UD) {
@@ -705,6 +702,7 @@ next_wqe:
 			wqe->state = wqe_state_done;
 			wqe->status = IB_WC_SUCCESS;
 			__rxe_do_task(&qp->comp.task);
+			rxe_drop_ref(qp);
 			return 0;
 		}
 		payload = mtu;
@@ -753,19 +751,9 @@ err:
 	kfree_skb(skb);
 	wqe->status = IB_WC_LOC_PROT_ERR;
 	wqe->state = wqe_state_error;
-
-	/*
-	 * IBA Spec. Section 10.7.3.1 SIGNALED COMPLETIONS
-	 * ---------8<---------8<-------------
-	 * ...Note that if a completion error occurs, a Work Completion
-	 * will always be generated, even if the signaling
-	 * indicator requests an Unsignaled Completion.
-	 * ---------8<---------8<-------------
-	 */
-	wqe->wr.send_flags |= IB_SEND_SIGNALED;
 	__rxe_do_task(&qp->comp.task);
-	return -EAGAIN;
 
 exit:
+	rxe_drop_ref(qp);
 	return -EAGAIN;
 }

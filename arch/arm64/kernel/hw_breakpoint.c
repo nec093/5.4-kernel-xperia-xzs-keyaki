@@ -548,13 +548,12 @@ int arch_validate_hwbkpt_settings(struct perf_event *bp)
 			/* Aligned */
 			break;
 		case 1:
+			/* Allow single byte watchpoint. */
+			if (info->ctrl.len == ARM_BREAKPOINT_LEN_1)
+				break;
 		case 2:
 			/* Allow halfword watchpoints and breakpoints. */
 			if (info->ctrl.len == ARM_BREAKPOINT_LEN_2)
-				break;
-		case 3:
-			/* Allow single byte watchpoint. */
-			if (info->ctrl.len == ARM_BREAKPOINT_LEN_1)
 				break;
 		default:
 			return -EINVAL;
@@ -722,6 +721,8 @@ static u64 get_distance_from_watchpoint(unsigned long addr, u64 val,
 {
 	u64 wp_low, wp_high;
 	u32 lens, lene;
+
+	addr = untagged_addr(addr);
 
 	lens = __ffs(ctrl->len);
 	lene = __fls(ctrl->len);
@@ -1003,7 +1004,7 @@ static int __init arch_hw_breakpoint_init(void)
 	 * debugger will leave the world in a nice state for us.
 	 */
 	ret = cpuhp_setup_state(CPUHP_AP_PERF_ARM_HW_BREAKPOINT_STARTING,
-			  "CPUHP_AP_PERF_ARM_HW_BREAKPOINT_STARTING",
+			  "perf/arm64/hw_breakpoint:starting",
 			  hw_breakpoint_reset, NULL);
 	if (ret)
 		pr_err("failed to register CPU hotplug notifier: %d\n", ret);

@@ -318,7 +318,7 @@ static inline int __vlan_insert_tag(struct sk_buff *skb,
 	if (skb_cow_head(skb, VLAN_HLEN) < 0)
 		return -ENOMEM;
 
-	veth = (struct vlan_ethhdr *)skb_push(skb, VLAN_HLEN);
+	veth = skb_push(skb, VLAN_HLEN);
 
 	/* Move the mac addresses to the beginning of the new header. */
 	memmove(skb->data, skb->data + VLAN_HLEN, 2 * ETH_ALEN);
@@ -397,22 +397,6 @@ static inline struct sk_buff *__vlan_hwaccel_push_inside(struct sk_buff *skb)
 					skb_vlan_tag_get(skb));
 	if (likely(skb))
 		skb->vlan_tci = 0;
-	return skb;
-}
-/*
- * vlan_hwaccel_push_inside - pushes vlan tag to the payload
- * @skb: skbuff to tag
- *
- * Checks is tag is present in @skb->vlan_tci and if it is, it pushes the
- * VLAN tag from @skb->vlan_tci inside to the payload.
- *
- * Following the skb_unshare() example, in case of error, the calling function
- * doesn't have to worry about freeing the original skb.
- */
-static inline struct sk_buff *vlan_hwaccel_push_inside(struct sk_buff *skb)
-{
-	if (skb_vlan_tag_present(skb))
-		skb = __vlan_hwaccel_push_inside(skb);
 	return skb;
 }
 

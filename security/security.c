@@ -4,6 +4,7 @@
  * Copyright (C) 2001 WireX Communications, Inc <chris@wirex.com>
  * Copyright (C) 2001-2002 Greg Kroah-Hartman <greg@kroah.com>
  * Copyright (C) 2001 Networks Associates Technology, Inc <ssmalley@nai.com>
+ * Copyright (C) 2016 Mellanox Technologies
  *
  *	This program is free software; you can redistribute it and/or modify
  *	it under the terms of the GNU General Public License as published by
@@ -26,6 +27,7 @@
 #include <linux/mount.h>
 #include <linux/personality.h>
 #include <linux/backing-dev.h>
+#include <linux/string.h>
 #include <net/flow.h>
 
 #define MAX_LSM_EVM_XATTR	2
@@ -33,6 +35,10 @@
 /* Maximum number of letters for an LSM name string */
 #define SECURITY_NAME_MAX	10
 
+struct security_hook_heads security_hook_heads __lsm_ro_after_init;
+static ATOMIC_NOTIFIER_HEAD(lsm_notifier_chain);
+
+char *lsm_names;
 /* Boot-time LSM user choice */
 static __initdata char chosen_lsm[SECURITY_NAME_MAX + 1] =
 	CONFIG_DEFAULT_SECURITY;
@@ -54,6 +60,12 @@ static void __init do_security_initcalls(void)
  */
 int __init security_init(void)
 {
+	int i;
+	struct list_head *list = (struct list_head *) &security_hook_heads;
+
+	for (i = 0; i < sizeof(security_hook_heads) / sizeof(struct list_head);
+	     i++)
+		INIT_LIST_HEAD(&list[i]);
 	pr_info("Security Framework initialized\n");
 
 	/*
@@ -79,6 +91,40 @@ static int __init choose_lsm(char *str)
 }
 __setup("security=", choose_lsm);
 
+static bool match_last_lsm(const char *list, const char *lsm)
+{
+	const char *last;
+
+	if (WARN_ON(!list || !lsm))
+		return false;
+	last = strrchr(list, ',');
+	if (last)
+		/* Pass the comma, strcmp() will check for '\0' */
+		last++;
+	else
+		last = list;
+	return !strcmp(last, lsm);
+}
+
+static int lsm_append(char *new, char **result)
+{
+	char *cp;
+
+	if (*result == NULL) {
+		*result = kstrdup(new, GFP_KERNEL);
+	} else {
+		/* Check if it is the last registered name */
+		if (match_last_lsm(*result, new))
+			return 0;
+		cp = kasprintf(GFP_KERNEL, "%s,%s", *result, new);
+		if (cp == NULL)
+			return -ENOMEM;
+		kfree(*result);
+		*result = cp;
+	}
+	return 0;
+}
+
 /**
  * security_module_enable - Load given security module on boot ?
  * @module: the name of the module
@@ -87,16 +133,59 @@ __setup("security=", choose_lsm);
  * to avoid security registration races. This method may also be used
  * to check if your LSM is currently loaded during kernel initialization.
  *
- * Return true if:
- *	-The passed LSM is the one chosen by user at boot time,
- *	-or the passed LSM is configured as the default and the user did not
- *	 choose an alternate LSM at boot time.
+ * Returns:
+ *
+ * true if:
+ *
+ * - The passed LSM is the one chosen by user at boot time,
+ * - or the passed LSM is configured as the default and the user did not
+ *   choose an alternate LSM at boot time.
+ *
  * Otherwise, return false.
  */
 int __init security_module_enable(const char *module)
 {
 	return !strcmp(module, chosen_lsm);
 }
+
+/**
+ * security_add_hooks - Add a modules hooks to the hook lists.
+ * @hooks: the hooks to add
+ * @count: the number of hooks to add
+ * @lsm: the name of the security module
+ *
+ * Each LSM has to register its hooks with the infrastructure.
+ */
+void __init security_add_hooks(struct security_hook_list *hooks, int count,
+				char *lsm)
+{
+	int i;
+
+	for (i = 0; i < count; i++) {
+		hooks[i].lsm = lsm;
+		list_add_tail_rcu(&hooks[i].list, hooks[i].head);
+	}
+	if (lsm_append(lsm, &lsm_names) < 0)
+		panic("%s - Cannot get early memory.\n", __func__);
+}
+
+int call_lsm_notifier(enum lsm_event event, void *data)
+{
+	return atomic_notifier_call_chain(&lsm_notifier_chain, event, data);
+}
+EXPORT_SYMBOL(call_lsm_notifier);
+
+int register_lsm_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&lsm_notifier_chain, nb);
+}
+EXPORT_SYMBOL(register_lsm_notifier);
+
+int unregister_lsm_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&lsm_notifier_chain, nb);
+}
+EXPORT_SYMBOL(unregister_lsm_notifier);
 
 /*
  * Hook list operation macros.
@@ -263,11 +352,6 @@ void security_bprm_committed_creds(struct linux_binprm *bprm)
 	call_void_hook(bprm_committed_creds, bprm);
 }
 
-int security_bprm_secureexec(struct linux_binprm *bprm)
-{
-	return call_int_hook(bprm_secureexec, 0, bprm);
-}
-
 int security_sb_alloc(struct super_block *sb)
 {
 	return call_int_hook(sb_alloc_security, 0, sb);
@@ -332,9 +416,12 @@ int security_sb_set_mnt_opts(struct super_block *sb,
 EXPORT_SYMBOL(security_sb_set_mnt_opts);
 
 int security_sb_clone_mnt_opts(const struct super_block *oldsb,
-				struct super_block *newsb)
+				struct super_block *newsb,
+				unsigned long kern_flags,
+				unsigned long *set_kern_flags)
 {
-	return call_int_hook(sb_clone_mnt_opts, 0, oldsb, newsb);
+	return call_int_hook(sb_clone_mnt_opts, 0, oldsb, newsb,
+				kern_flags, set_kern_flags);
 }
 EXPORT_SYMBOL(security_sb_clone_mnt_opts);
 
@@ -897,9 +984,9 @@ int security_file_open(struct file *file, const struct cred *cred)
 	return fsnotify_perm(file, MAY_OPEN);
 }
 
-int security_task_create(unsigned long clone_flags)
+int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
 {
-	return call_int_hook(task_create, 0, clone_flags);
+	return call_int_hook(task_alloc, 0, task, clone_flags);
 }
 
 void security_task_free(struct task_struct *task)
@@ -914,13 +1001,6 @@ int security_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 
 void security_cred_free(struct cred *cred)
 {
-	/*
-	 * There is a failure case in prepare_creds() that
-	 * may result in a call here with ->security being NULL.
-	 */
-	if (unlikely(cred->security == NULL))
-		return;
-
 	call_void_hook(cred_free, cred);
 }
 
@@ -1015,6 +1095,12 @@ int security_task_getioprio(struct task_struct *p)
 	return call_int_hook(task_getioprio, 0, p);
 }
 
+int security_task_prlimit(const struct cred *cred, const struct cred *tcred,
+			  unsigned int flags)
+{
+	return call_int_hook(task_prlimit, 0, cred, tcred, flags);
+}
+
 int security_task_setrlimit(struct task_struct *p, unsigned int resource,
 		struct rlimit *new_rlim)
 {
@@ -1040,11 +1126,6 @@ int security_task_kill(struct task_struct *p, struct siginfo *info,
 			int sig, u32 secid)
 {
 	return call_int_hook(task_kill, 0, p, info, sig, secid);
-}
-
-int security_task_wait(struct task_struct *p)
-{
-	return call_int_hook(task_wait, 0, p);
 }
 
 int security_task_prctl(int option, unsigned long arg2, unsigned long arg3,
@@ -1187,9 +1268,9 @@ int security_getprocattr(struct task_struct *p, char *name, char **value)
 	return call_int_hook(getprocattr, -EINVAL, p, name, value);
 }
 
-int security_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
+int security_setprocattr(const char *name, void *value, size_t size)
 {
-	return call_int_hook(setprocattr, -EINVAL, p, name, value, size);
+	return call_int_hook(setprocattr, -EINVAL, name, value, size);
 }
 
 int security_netlink_send(struct sock *sk, struct sk_buff *skb)
@@ -1457,6 +1538,33 @@ int security_tun_dev_open(void *security)
 EXPORT_SYMBOL(security_tun_dev_open);
 
 #endif	/* CONFIG_SECURITY_NETWORK */
+
+#ifdef CONFIG_SECURITY_INFINIBAND
+
+int security_ib_pkey_access(void *sec, u64 subnet_prefix, u16 pkey)
+{
+	return call_int_hook(ib_pkey_access, 0, sec, subnet_prefix, pkey);
+}
+EXPORT_SYMBOL(security_ib_pkey_access);
+
+int security_ib_endport_manage_subnet(void *sec, const char *dev_name, u8 port_num)
+{
+	return call_int_hook(ib_endport_manage_subnet, 0, sec, dev_name, port_num);
+}
+EXPORT_SYMBOL(security_ib_endport_manage_subnet);
+
+int security_ib_alloc_security(void **sec)
+{
+	return call_int_hook(ib_alloc_security, 0, sec);
+}
+EXPORT_SYMBOL(security_ib_alloc_security);
+
+void security_ib_free_security(void *sec)
+{
+	call_void_hook(ib_free_security, sec);
+}
+EXPORT_SYMBOL(security_ib_free_security);
+#endif	/* CONFIG_SECURITY_INFINIBAND */
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 

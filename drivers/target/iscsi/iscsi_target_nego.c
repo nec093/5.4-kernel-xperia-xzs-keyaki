@@ -18,6 +18,9 @@
 
 #include <linux/ctype.h>
 #include <linux/kthread.h>
+#include <linux/slab.h>
+#include <linux/sched/signal.h>
+#include <net/sock.h>
 #include <scsi/iscsi_proto.h>
 #include <target/target_core_base.h>
 #include <target/target_core_fabric.h>
@@ -652,28 +655,6 @@ err:
 	iscsit_deaccess_np(np, tpg, tpg_np);
 }
 
-static void iscsi_target_do_cleanup(struct work_struct *work)
-{
-	struct iscsi_conn *conn = container_of(work,
-				struct iscsi_conn, login_cleanup_work.work);
-	struct sock *sk = conn->sock->sk;
-	struct iscsi_login *login = conn->login;
-	struct iscsi_np *np = login->np;
-	struct iscsi_portal_group *tpg = conn->tpg;
-	struct iscsi_tpg_np *tpg_np = conn->tpg_np;
-
-	pr_debug("Entering iscsi_target_do_cleanup\n");
-
-	cancel_delayed_work_sync(&conn->login_work);
-	conn->orig_state_change(sk);
-
-	iscsi_target_restore_sock_callbacks(conn);
-	iscsi_target_login_drop(conn, login);
-	iscsit_deaccess_np(np, tpg, tpg_np);
-
-	pr_debug("iscsi_target_do_cleanup done()\n");
-}
-
 static void iscsi_target_sk_state_change(struct sock *sk)
 {
 	struct iscsi_conn *conn;
@@ -1081,7 +1062,6 @@ int iscsi_target_locate_portal(
 	int sessiontype = 0, ret = 0, tag_num, tag_size;
 
 	INIT_DELAYED_WORK(&conn->login_work, iscsi_target_do_login_rx);
-	INIT_DELAYED_WORK(&conn->login_cleanup_work, iscsi_target_do_cleanup);
 	iscsi_target_set_sock_callbacks(conn);
 
 	login->np = np;
@@ -1307,8 +1287,8 @@ int iscsi_target_start_negotiation(
 {
 	int ret;
 
-       if (conn->sock) {
-               struct sock *sk = conn->sock->sk;
+	if (conn->sock) {
+		struct sock *sk = conn->sock->sk;
 
 		write_lock_bh(&sk->sk_callback_lock);
 		set_bit(LOGIN_FLAGS_READY, &conn->login_flags);
@@ -1330,7 +1310,6 @@ int iscsi_target_start_negotiation(
 
 	if (ret < 0) {
 		cancel_delayed_work_sync(&conn->login_work);
-		cancel_delayed_work_sync(&conn->login_cleanup_work);
 		iscsi_target_restore_sock_callbacks(conn);
 		iscsi_remove_failed_auth_entry(conn);
 	}

@@ -136,7 +136,7 @@ static void qcom_cc_gdsc_unregister(void *data)
 
 /*
  * Backwards compatibility with old DTs. Register a pass-through factor 1/1
- * clock to translate 'path' clk into 'name' clk and regsiter the 'path'
+ * clock to translate 'path' clk into 'name' clk and register the 'path'
  * clk as a fixed rate clock if it isn't present.
  */
 static int _qcom_cc_register_board_clk(struct device *dev, const char *path,
@@ -153,7 +153,6 @@ static int _qcom_cc_register_board_clk(struct device *dev, const char *path,
 	clocks_node = of_find_node_by_path("/clocks");
 	if (clocks_node)
 		node = of_find_node_by_name(clocks_node, path);
-	of_node_put(clocks_node);
 
 	if (!node) {
 		fixed = devm_kzalloc(dev, sizeof(*fixed), GFP_KERNEL);
@@ -198,15 +197,12 @@ int qcom_cc_register_board_clk(struct device *dev, const char *path,
 			       const char *name, unsigned long rate)
 {
 	bool add_factor = true;
-	struct device_node *node;
 
-	/* The RPM clock driver will add the factor clock if present */
-	if (IS_ENABLED(CONFIG_QCOM_RPMCC)) {
-		node = of_find_compatible_node(NULL, NULL, "qcom,rpmcc");
-		if (of_device_is_available(node))
-			add_factor = false;
-		of_node_put(node);
-	}
+	/*
+	 * TODO: The RPM clock driver currently does not support the xo clock.
+	 * When xo is added to the RPM clock driver, we should change this
+	 * function to skip registration of xo factor clocks.
+	 */
 
 	return _qcom_cc_register_board_clk(dev, path, name, rate, add_factor);
 }

@@ -24,6 +24,7 @@
 
 #include "common.h"
 #include "clk-pll.h"
+#include "common.h"
 
 #define PLL_OUTCTRL		BIT(0)
 #define PLL_BYPASSNL		BIT(1)

@@ -352,13 +352,13 @@ xlog_header_check_mount(
 {
 	ASSERT(head->h_magicno == cpu_to_be32(XLOG_HEADER_MAGIC_NUM));
 
-	if (uuid_is_nil(&head->h_fs_uuid)) {
+	if (uuid_is_null(&head->h_fs_uuid)) {
 		/*
 		 * IRIX doesn't write the h_fs_uuid or h_fmt fields. If
-		 * h_fs_uuid is nil, we assume this log was last mounted
+		 * h_fs_uuid is null, we assume this log was last mounted
 		 * by IRIX and continue.
 		 */
-		xfs_warn(mp, "nil uuid in log - IRIX style log");
+		xfs_warn(mp, "null uuid in log - IRIX style log");
 	} else if (unlikely(!uuid_equal(&mp->m_sb.sb_uuid, &head->h_fs_uuid))) {
 		xfs_warn(mp, "log has mismatched uuid - can't recover");
 		xlog_header_check_dump(mp, head);
@@ -2051,7 +2051,7 @@ xlog_peek_buffer_cancelled(
 	struct xlog		*log,
 	xfs_daddr_t		blkno,
 	uint			len,
-	ushort			flags)
+	unsigned short			flags)
 {
 	struct list_head	*bucket;
 	struct xfs_buf_cancel	*bcp;
@@ -2091,7 +2091,7 @@ xlog_check_buffer_cancelled(
 	struct xlog		*log,
 	xfs_daddr_t		blkno,
 	uint			len,
-	ushort			flags)
+	unsigned short			flags)
 {
 	struct xfs_buf_cancel	*bcp;
 
@@ -2256,9 +2256,9 @@ xlog_recover_get_buf_lsn(
 	struct xfs_mount	*mp,
 	struct xfs_buf		*bp)
 {
-	__uint32_t		magic32;
-	__uint16_t		magic16;
-	__uint16_t		magicda;
+	uint32_t		magic32;
+	uint16_t		magic16;
+	uint16_t		magicda;
 	void			*blk = bp->b_addr;
 	uuid_t			*uuid;
 	xfs_lsn_t		lsn = -1;
@@ -2407,9 +2407,9 @@ xlog_recover_validate_buf_type(
 	xfs_lsn_t		current_lsn)
 {
 	struct xfs_da_blkinfo	*info = bp->b_addr;
-	__uint32_t		magic32;
-	__uint16_t		magic16;
-	__uint16_t		magicda;
+	uint32_t		magic32;
+	uint16_t		magic16;
+	uint16_t		magicda;
 	char			*warnmsg = NULL;
 
 	/*
@@ -2878,7 +2878,7 @@ xlog_recover_buffer_pass2(
 	if (XFS_DINODE_MAGIC ==
 	    be16_to_cpu(*((__be16 *)xfs_buf_offset(bp, 0))) &&
 	    (BBTOB(bp->b_io_length) != MAX(log->l_mp->m_sb.sb_blocksize,
-			(__uint32_t)log->l_mp->m_inode_cluster_size))) {
+			(uint32_t)log->l_mp->m_inode_cluster_size))) {
 		xfs_buf_stale(bp);
 		error = xfs_bwrite(bp);
 	} else {
@@ -3449,7 +3449,7 @@ xlog_recover_efd_pass2(
 	xfs_efd_log_format_t	*efd_formatp;
 	xfs_efi_log_item_t	*efip = NULL;
 	xfs_log_item_t		*lip;
-	__uint64_t		efi_id;
+	uint64_t		efi_id;
 	struct xfs_ail_cursor	cur;
 	struct xfs_ail		*ailp = log->l_ailp;
 
@@ -3545,7 +3545,7 @@ xlog_recover_rud_pass2(
 	struct xfs_rud_log_format	*rud_formatp;
 	struct xfs_rui_log_item		*ruip = NULL;
 	struct xfs_log_item		*lip;
-	__uint64_t			rui_id;
+	uint64_t			rui_id;
 	struct xfs_ail_cursor		cur;
 	struct xfs_ail			*ailp = log->l_ailp;
 
@@ -3661,7 +3661,7 @@ xlog_recover_cud_pass2(
 	struct xfs_cud_log_format	*cud_formatp;
 	struct xfs_cui_log_item		*cuip = NULL;
 	struct xfs_log_item		*lip;
-	__uint64_t			cui_id;
+	uint64_t			cui_id;
 	struct xfs_ail_cursor		cur;
 	struct xfs_ail			*ailp = log->l_ailp;
 
@@ -3780,7 +3780,7 @@ xlog_recover_bud_pass2(
 	struct xfs_bud_log_format	*bud_formatp;
 	struct xfs_bui_log_item		*buip = NULL;
 	struct xfs_log_item		*lip;
-	__uint64_t			bui_id;
+	uint64_t			bui_id;
 	struct xfs_ail_cursor		cur;
 	struct xfs_ail			*ailp = log->l_ailp;
 
@@ -3822,7 +3822,7 @@ xlog_recover_bud_pass2(
  * This routine is called when an inode create format structure is found in a
  * committed transaction in the log.  It's purpose is to initialise the inodes
  * being allocated on disk. This requires us to get inode cluster buffers that
- * match the range to be intialised, stamped with inode templates and written
+ * match the range to be initialised, stamped with inode templates and written
  * by delayed write so that subsequent modifications will hit the cached buffer
  * and only need writing out at the end of recovery.
  */
@@ -5145,19 +5145,21 @@ xlog_recover_process(
 	struct list_head	*buffer_list)
 {
 	int			error;
+	__le32			old_crc = rhead->h_crc;
 	__le32			crc;
+
 
 	crc = xlog_cksum(log, rhead, dp, be32_to_cpu(rhead->h_len));
 
 	/*
 	 * Nothing else to do if this is a CRC verification pass. Just return
 	 * if this a record with a non-zero crc. Unfortunately, mkfs always
-	 * sets h_crc to 0 so we must consider this valid even on v5 supers.
+	 * sets old_crc to 0 so we must consider this valid even on v5 supers.
 	 * Otherwise, return EFSBADCRC on failure so the callers up the stack
 	 * know precisely what failed.
 	 */
 	if (pass == XLOG_RECOVER_CRCPASS) {
-		if (rhead->h_crc && crc != rhead->h_crc)
+		if (old_crc && crc != old_crc)
 			return -EFSBADCRC;
 		return 0;
 	}
@@ -5168,11 +5170,11 @@ xlog_recover_process(
 	 * zero CRC check prevents warnings from being emitted when upgrading
 	 * the kernel from one that does not add CRCs by default.
 	 */
-	if (crc != rhead->h_crc) {
-		if (rhead->h_crc || xfs_sb_version_hascrc(&log->l_mp->m_sb)) {
+	if (crc != old_crc) {
+		if (old_crc || xfs_sb_version_hascrc(&log->l_mp->m_sb)) {
 			xfs_alert(log->l_mp,
 		"log record CRC mismatch: found 0x%x, expected 0x%x.",
-					le32_to_cpu(rhead->h_crc),
+					le32_to_cpu(old_crc),
 					le32_to_cpu(crc));
 			xfs_hex_dump(dp, 32);
 		}
@@ -5830,9 +5832,9 @@ xlog_recover_check_summary(
 	xfs_buf_t	*agfbp;
 	xfs_buf_t	*agibp;
 	xfs_agnumber_t	agno;
-	__uint64_t	freeblks;
-	__uint64_t	itotal;
-	__uint64_t	ifree;
+	uint64_t	freeblks;
+	uint64_t	itotal;
+	uint64_t	ifree;
 	int		error;
 
 	mp = log->l_mp;

@@ -756,6 +756,17 @@ static int __zswap_param_set(const char *val, const struct kernel_param *kp,
 
 	spin_unlock(&zswap_pools_lock);
 
+	if (!zswap_has_pool && !pool) {
+		/* if initial pool creation failed, and this pool creation also
+		 * failed, maybe both compressor and zpool params were bad.
+		 * Allow changing this param, so pool creation will succeed
+		 * when the other param is changed. We already verified this
+		 * param is ok in the zpool_has_pool() or crypto_has_comp()
+		 * checks above.
+		 */
+		ret = param_set_charp(s, kp);
+	}
+
 	/* drop the ref from either the old current pool,
 	 * or the new pool we failed to add
 	 */

@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * PCIe RC driver for Synopsys DesignWare Core
  *
  * Copyright (C) 2015-2016 Synopsys, Inc. (www.synopsys.com)
  *
  * Authors: Joao Pinto <Joao.Pinto@synopsys.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -12,28 +15,25 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/resource.h>
 #include <linux/signal.h>
 #include <linux/types.h>
-#include <linux/regmap.h>
 
 #include "pcie-designware.h"
 
 struct dw_plat_pcie {
-	struct dw_pcie			*pci;
-	struct regmap			*regmap;
-	enum dw_pcie_device_mode	mode;
+	struct dw_pcie		*pci;
 };
 
-struct dw_plat_pcie_of_data {
-	enum dw_pcie_device_mode	mode;
-};
+static irqreturn_t dw_plat_pcie_msi_irq_handler(int irq, void *arg)
+{
+	struct pcie_port *pp = arg;
 
-static const struct of_device_id dw_plat_pcie_of_match[];
+	return dw_handle_msi_irq(pp);
+}
 
 static int dw_plat_pcie_host_init(struct pcie_port *pp)
 {
@@ -52,53 +52,9 @@ static const struct dw_pcie_host_ops dw_plat_pcie_host_ops = {
 	.host_init = dw_plat_pcie_host_init,
 };
 
-static int dw_plat_pcie_establish_link(struct dw_pcie *pci)
-{
-	return 0;
-}
-
-static const struct dw_pcie_ops dw_pcie_ops = {
-	.start_link = dw_plat_pcie_establish_link,
-};
-
-static void dw_plat_pcie_ep_init(struct dw_pcie_ep *ep)
-{
-	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-	enum pci_barno bar;
-
-	for (bar = BAR_0; bar <= BAR_5; bar++)
-		dw_pcie_ep_reset_bar(pci, bar);
-}
-
-static int dw_plat_pcie_ep_raise_irq(struct dw_pcie_ep *ep, u8 func_no,
-				     enum pci_epc_irq_type type,
-				     u8 interrupt_num)
-{
-	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
-
-	switch (type) {
-	case PCI_EPC_IRQ_LEGACY:
-		dev_err(pci->dev, "EP cannot trigger legacy IRQs\n");
-		return -EINVAL;
-	case PCI_EPC_IRQ_MSI:
-		return dw_pcie_ep_raise_msi_irq(ep, func_no, interrupt_num);
-	default:
-		dev_err(pci->dev, "UNKNOWN IRQ type\n");
-	}
-
-	return 0;
-}
-
-static struct dw_pcie_ep_ops pcie_ep_ops = {
-	.ep_init = dw_plat_pcie_ep_init,
-	.raise_irq = dw_plat_pcie_ep_raise_irq,
-};
-
-static int dw_plat_add_pcie_port(struct dw_plat_pcie *dw_plat_pcie,
+static int dw_plat_add_pcie_port(struct pcie_port *pp,
 				 struct platform_device *pdev)
 {
-	struct dw_pcie *pci = dw_plat_pcie->pci;
-	struct pcie_port *pp = &pci->pp;
 	struct device *dev = &pdev->dev;
 	int ret;
 
@@ -110,6 +66,15 @@ static int dw_plat_add_pcie_port(struct dw_plat_pcie *dw_plat_pcie,
 		pp->msi_irq = platform_get_irq(pdev, 0);
 		if (pp->msi_irq < 0)
 			return pp->msi_irq;
+
+		ret = devm_request_irq(dev, pp->msi_irq,
+					dw_plat_pcie_msi_irq_handler,
+					IRQF_SHARED | IRQF_NO_THREAD,
+					"dw-plat-pcie-msi", pp);
+		if (ret) {
+			dev_err(dev, "failed to request MSI IRQ\n");
+			return ret;
+		}
 	}
 
 	pp->root_bus_nr = -1;
@@ -117,44 +82,15 @@ static int dw_plat_add_pcie_port(struct dw_plat_pcie *dw_plat_pcie,
 
 	ret = dw_pcie_host_init(pp);
 	if (ret) {
-		dev_err(dev, "Failed to initialize host\n");
+		dev_err(dev, "failed to initialize host\n");
 		return ret;
 	}
 
 	return 0;
 }
 
-static int dw_plat_add_pcie_ep(struct dw_plat_pcie *dw_plat_pcie,
-			       struct platform_device *pdev)
-{
-	int ret;
-	struct dw_pcie_ep *ep;
-	struct resource *res;
-	struct device *dev = &pdev->dev;
-	struct dw_pcie *pci = dw_plat_pcie->pci;
-
-	ep = &pci->ep;
-	ep->ops = &pcie_ep_ops;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi2");
-	pci->dbi_base2 = devm_ioremap_resource(dev, res);
-	if (IS_ERR(pci->dbi_base2))
-		return PTR_ERR(pci->dbi_base2);
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "addr_space");
-	if (!res)
-		return -EINVAL;
-
-	ep->phys_base = res->start;
-	ep->addr_size = resource_size(res);
-
-	ret = dw_pcie_ep_init(ep);
-	if (ret) {
-		dev_err(dev, "Failed to initialize endpoint\n");
-		return ret;
-	}
-	return 0;
-}
+static const struct dw_pcie_ops dw_pcie_ops = {
+};
 
 static int dw_plat_pcie_probe(struct platform_device *pdev)
 {
@@ -163,16 +99,6 @@ static int dw_plat_pcie_probe(struct platform_device *pdev)
 	struct dw_pcie *pci;
 	struct resource *res;  /* Resource from DT */
 	int ret;
-	const struct of_device_id *match;
-	const struct dw_plat_pcie_of_data *data;
-	enum dw_pcie_device_mode mode;
-
-	match = of_match_device(dw_plat_pcie_of_match, dev);
-	if (!match)
-		return -EINVAL;
-
-	data = (struct dw_plat_pcie_of_data *)match->data;
-	mode = (enum dw_pcie_device_mode)data->mode;
 
 	dw_plat_pcie = devm_kzalloc(dev, sizeof(*dw_plat_pcie), GFP_KERNEL);
 	if (!dw_plat_pcie)
@@ -186,59 +112,23 @@ static int dw_plat_pcie_probe(struct platform_device *pdev)
 	pci->ops = &dw_pcie_ops;
 
 	dw_plat_pcie->pci = pci;
-	dw_plat_pcie->mode = mode;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dbi");
-	if (!res)
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	pci->dbi_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(pci->dbi_base))
 		return PTR_ERR(pci->dbi_base);
 
 	platform_set_drvdata(pdev, dw_plat_pcie);
 
-	switch (dw_plat_pcie->mode) {
-	case DW_PCIE_RC_TYPE:
-		if (!IS_ENABLED(CONFIG_PCIE_DW_PLAT_HOST))
-			return -ENODEV;
-
-		ret = dw_plat_add_pcie_port(dw_plat_pcie, pdev);
-		if (ret < 0)
-			return ret;
-		break;
-	case DW_PCIE_EP_TYPE:
-		if (!IS_ENABLED(CONFIG_PCIE_DW_PLAT_EP))
-			return -ENODEV;
-
-		ret = dw_plat_add_pcie_ep(dw_plat_pcie, pdev);
-		if (ret < 0)
-			return ret;
-		break;
-	default:
-		dev_err(dev, "INVALID device type %d\n", dw_plat_pcie->mode);
-	}
+	ret = dw_plat_add_pcie_port(&pci->pp, pdev);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
 
-static const struct dw_plat_pcie_of_data dw_plat_pcie_rc_of_data = {
-	.mode = DW_PCIE_RC_TYPE,
-};
-
-static const struct dw_plat_pcie_of_data dw_plat_pcie_ep_of_data = {
-	.mode = DW_PCIE_EP_TYPE,
-};
-
 static const struct of_device_id dw_plat_pcie_of_match[] = {
-	{
-		.compatible = "snps,dw-pcie",
-		.data = &dw_plat_pcie_rc_of_data,
-	},
-	{
-		.compatible = "snps,dw-pcie-ep",
-		.data = &dw_plat_pcie_ep_of_data,
-	},
+	{ .compatible = "snps,dw-pcie", },
 	{},
 };
 

@@ -27,8 +27,8 @@ static int __bpf_mt_check_bytecode(struct sock_filter *insns, __u16 len,
 {
 	struct sock_fprog_kern program;
 
-	if (len > XT_BPF_MAX_NUM_INSTR)
-		return -EINVAL;
+	program.len = len;
+	program.filter = insns;
 
 	program.len = len;
 	program.filter = insns;
@@ -55,12 +55,18 @@ static int __bpf_mt_check_fd(int fd, struct bpf_prog **ret)
 
 static int __bpf_mt_check_path(const char *path, struct bpf_prog **ret)
 {
-	if (strnlen(path, XT_BPF_PATH_MAX) == XT_BPF_PATH_MAX)
-		return -EINVAL;
+	mm_segment_t oldfs = get_fs();
+	int retval, fd;
 
-	*ret = bpf_prog_get_type_path(path, BPF_PROG_TYPE_SOCKET_FILTER);
-	return PTR_ERR_OR_ZERO(*ret);
+	set_fs(KERNEL_DS);
+	fd = bpf_obj_get_user(path);
+	set_fs(oldfs);
+	if (fd < 0)
+		return fd;
 
+	retval = __bpf_mt_check_fd(fd, ret);
+	sys_close(fd);
+	return retval;
 }
 
 static int bpf_mt_check(const struct xt_mtchk_param *par)
@@ -125,6 +131,7 @@ static struct xt_match bpf_mt_reg[] __read_mostly = {
 		.match		= bpf_mt,
 		.destroy	= bpf_mt_destroy,
 		.matchsize	= sizeof(struct xt_bpf_info),
+		.usersize	= offsetof(struct xt_bpf_info, filter),
 		.me		= THIS_MODULE,
 	},
 	{
@@ -135,6 +142,7 @@ static struct xt_match bpf_mt_reg[] __read_mostly = {
 		.match		= bpf_mt_v1,
 		.destroy	= bpf_mt_destroy_v1,
 		.matchsize	= sizeof(struct xt_bpf_info_v1),
+		.usersize	= offsetof(struct xt_bpf_info_v1, filter),
 		.me		= THIS_MODULE,
 	},
 };

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #define pr_fmt(fmt) "kcov: " fmt
 
 #define DISABLE_BRANCH_PROFILING
@@ -97,8 +98,21 @@ void notrace __sanitizer_cov_trace_pc(void)
 	unsigned long pos;
 
 	t = current;
-	if (!check_kcov_mode(KCOV_MODE_TRACE_PC, t))
+	/*
+	 * We are interested in code coverage as a function of a syscall inputs,
+	 * so we ignore code executed in interrupts.
+	 */
+	if (!t || !in_task())
 		return;
+	mode = READ_ONCE(t->kcov_mode);
+	if (mode == KCOV_MODE_TRACE) {
+		unsigned long *area;
+		unsigned long pos;
+		unsigned long ip = _RET_IP_;
+
+#ifdef CONFIG_RANDOMIZE_BASE
+		ip -= kaslr_offset();
+#endif
 
 	area = t->kcov_area;
 	/* The first 64-bit word is the number of subsequent PCs. */
@@ -240,8 +254,7 @@ static void kcov_put(struct kcov *kcov)
 
 void kcov_task_init(struct task_struct *t)
 {
-	WRITE_ONCE(t->kcov_mode, KCOV_MODE_DISABLED);
-	barrier();
+	t->kcov_mode = KCOV_MODE_DISABLED;
 	t->kcov_size = 0;
 	t->kcov_area = NULL;
 	t->kcov = NULL;
@@ -370,9 +383,9 @@ static int kcov_ioctl_locked(struct kcov *kcov, unsigned int cmd,
 #endif
 		else
 			return -EINVAL;
-		t = current;
-		if (kcov->t != NULL || t->kcov != NULL)
+		if (kcov->t != NULL)
 			return -EBUSY;
+		t = current;
 		/* Cache in task struct for performance. */
 		t->kcov_size = kcov->size;
 		t->kcov_area = kcov->area;
