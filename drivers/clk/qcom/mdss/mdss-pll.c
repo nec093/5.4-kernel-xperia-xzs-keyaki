@@ -143,12 +143,19 @@ static int mdss_pll_resource_parse(struct platform_device *pdev,
 		pll_res->pll_interface_type = MDSS_DP_PLL_14NM;
 		pll_res->target_id = MDSS_PLL_TARGET_8996;
 		pll_res->revision = 2;
-	}
-
-	if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_10nm"))
+	} else if (!strcmp(compatible_stream, "qcom,mdss_dp_pll_10nm")) {
 		pll_res->pll_interface_type = MDSS_DP_PLL_10NM;
-	else
+	} else {
+		/*
+		 * Unknown compatible. The previous code fell through to the
+		 * error path for *every* compatible except dp_pll_10nm, which
+		 * released the clock/regulator config (num_clk = num_vreg = 0)
+		 * while still returning success, so PLL registers were later
+		 * accessed without the iface clock / gdsc enabled.
+		 */
+		rc = -EINVAL;
 		goto err;
+	}
 
 	return rc;
 

@@ -145,8 +145,13 @@ extern int overcommit_kbytes_handler(struct ctl_table *, int, void __user *,
  * mmap() functions).
  */
 
-/* Speculative page faults are not carried in this port: INIT_VMA is a no-op */
-#define INIT_VMA(vma) do { } while (0)
+/*
+ * Speculative page faults are not carried in this port, so INIT_VMA only does
+ * what mainline open-codes at every vma creation site. It must NOT be a
+ * no-op: a vma with an uninitialised anon_vma_chain oopses in
+ * __anon_vma_prepare() (seen on the first execve of /init).
+ */
+#define INIT_VMA(vma) INIT_LIST_HEAD(&(vma)->anon_vma_chain)
 
 extern struct kmem_cache *vm_area_cachep;
 

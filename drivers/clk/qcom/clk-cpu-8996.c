@@ -87,6 +87,20 @@ enum {
 };
 
 static void __iomem *vbases[NUM_BASES];
+/*
+ * Size of the mapping behind vbases[APC_BASE]. The early init maps only 4K
+ * of APC0; the perf cluster registers live 0x80000 above it and are only
+ * reachable once the probe has mapped the full region.
+ */
+static resource_size_t apc_map_size = SZ_4K;
+
+static void apc_write_sssctl(u32 cluster_offset)
+{
+	if (vbases[APC_BASE] &&
+	    cluster_offset + SSSCTL_OFFSET + sizeof(u32) <= apc_map_size)
+		writel_relaxed(SSSCTL_VAL, vbases[APC_BASE] + cluster_offset +
+			       SSSCTL_OFFSET);
+}
 
 static const u8 prim_pll_regs[PLL_OFF_MAX_REGS] = {
        [PLL_OFF_L_VAL] = 0x04,
@@ -836,9 +850,7 @@ static void qcom_cpu_clk_msm8996_acd_init(void)
 
 	if (PWRCL_CPU_REG_MASK == (hwid | PWRCL_CPU_REG_MASK)) {
 		/* Enable Soft Stop/Start */
-		if (vbases[APC_BASE])
-			writel_relaxed(SSSCTL_VAL, vbases[APC_BASE] +
-					PWRCL_REG_OFFSET + SSSCTL_OFFSET);
+		apc_write_sssctl(PWRCL_REG_OFFSET);
 		/* Ensure SSSCTL config goes through before enabling ACD. */
 		mb();
 		/* Program ACD control bits */
@@ -849,9 +861,7 @@ static void qcom_cpu_clk_msm8996_acd_init(void)
 		/* Program ACD control bits */
 		set_l2_indirect_reg(L2ACDCR_REG, ACDCR_VAL);
 		/* Enable Soft Stop/Start */
-		if (vbases[APC_BASE])
-			writel_relaxed(SSSCTL_VAL, vbases[APC_BASE] +
-					PERFCL_REG_OFFSET + SSSCTL_OFFSET);
+		apc_write_sssctl(PERFCL_REG_OFFSET);
 		/* Ensure SSSCTL config goes through before enabling ACD. */
 		mb();
 	}
@@ -1303,8 +1313,9 @@ static int qcom_cpu_clk_msm8996_driver_probe(struct platform_device *pdev)
 	vbases[APC_BASE] = devm_ioremap_resource(dev, res);
 	if (IS_ERR(vbases[APC_BASE]))
 		return PTR_ERR(vbases[APC_BASE]);
+	apc_map_size = resource_size(res);
 
-	regmap_cpu = devm_regmap_init_mmio(dev, vbases[APC_BASE],
+	regmap_cpu =devm_regmap_init_mmio(dev, vbases[APC_BASE],
 					   &cpu_msm8996_regmap_config);
 	if (IS_ERR(regmap_cpu))
 		return PTR_ERR(regmap_cpu);

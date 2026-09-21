@@ -11650,7 +11650,7 @@ static void perf_event_zombie_cleanup(unsigned int cpu)
 	spin_unlock(&zombie_list_lock);
 }
 
-static int perf_event_start_swevents(unsigned int cpu)
+int perf_event_start_swevents(unsigned int cpu)
 {
 	struct perf_event_context *ctx;
 	struct pmu *pmu;
@@ -11771,10 +11771,13 @@ int perf_event_init_cpu(unsigned int cpu)
 
 int perf_event_exit_cpu(unsigned int cpu)
 {
-	mutex_lock(&pmus_lock);
+	/*
+	 * No pmus_lock here: the 4.14 perf_event_exit_cpu_context() takes it
+	 * itself and pmus_lock is not recursive (self-deadlock on the first
+	 * CPU offline, which then blocks cpus_read_lock() forever).
+	 */
 	per_cpu(is_hotplugging, cpu) = true;
 	perf_event_exit_cpu_context(cpu);
-	mutex_unlock(&pmus_lock);
 	return 0;
 }
 
@@ -11817,24 +11820,12 @@ static struct notifier_block perf_event_idle_nb = {
 	.notifier_call = event_idle_notif,
 };
 
-#ifdef CONFIG_HOTPLUG_CPU
-static int perf_cpu_hp_init(void)
-{
-	int ret;
-
-	ret = cpuhp_setup_state_nocalls(CPUHP_AP_PERF_ONLINE,
-				"PERF/CORE/CPUHP_AP_PERF_ONLINE",
-				perf_event_start_swevents,
-				perf_event_exit_cpu);
-	if (ret)
-		pr_err("CPU hotplug notifier for perf core could not be registered: %d\n",
-		       ret);
-
-	return ret;
-}
-#else
+/*
+ * CPUHP_AP_PERF_ONLINE is wired statically in kernel/cpu.c (online callback
+ * is perf_event_start_swevents); a dynamic cpuhp_setup_state_nocalls() on it
+ * would fail with -EBUSY on 4.14.
+ */
 static int perf_cpu_hp_init(void) { return 0; }
-#endif
 
 void __init perf_event_init(void)
 {
