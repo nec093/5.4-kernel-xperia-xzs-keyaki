@@ -19,6 +19,8 @@
 
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
+#include <linux/sched.h>
+#include <linux/sched/topology.h>
 #include <linux/cpufreq_times.h>
 #include <linux/delay.h>
 #include <linux/device.h>

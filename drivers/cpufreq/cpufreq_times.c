@@ -15,11 +15,11 @@
 
 #include <linux/cpufreq.h>
 #include <linux/cpufreq_times.h>
-#include <linux/cputime.h>
 #include <linux/hashtable.h>
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
+#include <linux/jiffies.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -163,7 +163,7 @@ static int single_uid_time_in_state_show(struct seq_file *m, void *ptr)
 	for (i = 0; i < uid_entry->max_state; ++i) {
 		if (freq_index_invalid(i))
 			continue;
-		time = cputime_to_clock_t(uid_entry->time_in_state[i]);
+		time = nsec_to_clock_t(uid_entry->time_in_state[i]);
 		seq_write(m, &time, sizeof(time));
 	}
 
@@ -229,7 +229,7 @@ static int uid_time_in_state_seq_show(struct seq_file *m, void *v)
 			u64 time;
 			if (freq_index_invalid(i))
 				continue;
-			time = cputime_to_clock_t(uid_entry->time_in_state[i]);
+			time = nsec_to_clock_t(uid_entry->time_in_state[i]);
 			seq_put_decimal_ull(m, " ", time);
 		}
 		if (uid_entry->max_state)
@@ -302,7 +302,7 @@ int proc_time_in_state_show(struct seq_file *m, struct pid_namespace *ns,
 	struct pid *pid, struct task_struct *p)
 {
 	unsigned int cpu, i;
-	cputime_t cputime;
+	u64 cputime;
 	unsigned long flags;
 	struct cpu_freqs *freqs;
 	struct cpu_freqs *last_freqs = NULL;
@@ -323,14 +323,14 @@ int proc_time_in_state_show(struct seq_file *m, struct pid_namespace *ns,
 			    p->time_in_state)
 				cputime = p->time_in_state[freqs->offset + i];
 			seq_printf(m, "%u %lu\n", freqs->freq_table[i],
-				   (unsigned long)cputime_to_clock_t(cputime));
+				   (unsigned long)nsec_to_clock_t(cputime));
 		}
 	}
 	spin_unlock_irqrestore(&task_time_in_state_lock, flags);
 	return 0;
 }
 
-void cpufreq_acct_update_power(struct task_struct *p, cputime_t cputime)
+void cpufreq_acct_update_power(struct task_struct *p, u64 cputime)
 {
 	unsigned long flags;
 	unsigned int state;
