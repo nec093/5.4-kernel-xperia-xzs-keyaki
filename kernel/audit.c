@@ -1549,13 +1549,6 @@ static int __net_init audit_net_init(struct net *net)
 static void __net_exit audit_net_exit(struct net *net)
 {
 	struct audit_net *aunet = net_generic(net, audit_net_id);
-	struct sock *sock = aunet->nlsk;
-	mutex_lock(&audit_sock_mutex);
-	if (sock == audit_sock) {
-		audit_pid = 0;
-		audit_sock = NULL;
-	}
-	mutex_unlock(&audit_sock_mutex);
 
 	/* NOTE: you would think that we would want to check the auditd
 	 * connection and potentially reset it here if it lives in this

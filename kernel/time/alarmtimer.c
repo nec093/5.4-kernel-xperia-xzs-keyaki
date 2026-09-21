@@ -65,18 +65,6 @@ static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
 
-static void alarmtimer_triggered_func(void *p)
-{
-	struct rtc_device *rtc = rtcdev;
-
-	if (!(rtc->irq_data & RTC_AF))
-		return;
-	__pm_wakeup_event(ws, 2 * MSEC_PER_SEC);
-}
-
-static struct rtc_task alarmtimer_rtc_task = {
-	.func = alarmtimer_triggered_func
-};
 /**
  * alarmtimer_get_rtcdev - Return selected rtcdevice
  *
@@ -87,7 +75,7 @@ static struct rtc_task alarmtimer_rtc_task = {
 struct rtc_device *alarmtimer_get_rtcdev(void)
 {
 	unsigned long flags;
-	struct rtc_device *ret = NULL;
+	struct rtc_device *ret;
 
 	spin_lock_irqsave(&rtcdev_lock, flags);
 	ret = rtcdev;
@@ -101,13 +89,13 @@ static int alarmtimer_rtc_add_device(struct device *dev,
 				struct class_interface *class_intf)
 {
 	unsigned long flags;
-	int err = 0;
 	struct rtc_device *rtc = to_rtc_device(dev);
 	struct wakeup_source *__ws;
 	int ret = 0;
 
 	if (rtcdev)
 		return -EBUSY;
+
 	if (!rtc->ops->set_alarm)
 		return -1;
 
@@ -141,7 +129,6 @@ static inline void alarmtimer_rtc_timer_init(void)
 
 static struct class_interface alarmtimer_rtc_interface = {
 	.add_dev = &alarmtimer_rtc_add_device,
-	.remove_dev = &alarmtimer_rtc_remove_device,
 };
 
 static int alarmtimer_rtc_interface_setup(void)

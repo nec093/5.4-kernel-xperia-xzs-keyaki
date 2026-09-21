@@ -18,7 +18,6 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
-#include <linux/sched_clock.h>
 #include <linux/module.h>
 #include <trace/events/power.h>
 
@@ -73,6 +72,12 @@ int tick_is_oneshot_available(void)
 		return 1;
 	return tick_broadcast_oneshot_available();
 }
+
+ktime_t *get_next_event_cpu(unsigned int cpu)
+{
+	return &(per_cpu(tick_cpu_device, cpu).evtdev->next_event);
+}
+EXPORT_SYMBOL_GPL(get_next_event_cpu);
 
 /*
  * Periodic tick
@@ -491,7 +496,6 @@ void tick_freeze(void)
 	if (tick_freeze_depth == num_online_cpus()) {
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), true);
-		sched_clock_suspend();
 		timekeeping_suspend();
 	} else {
 		tick_suspend_local();
@@ -515,7 +519,6 @@ void tick_unfreeze(void)
 
 	if (tick_freeze_depth == num_online_cpus()) {
 		timekeeping_resume();
-		sched_clock_resume();
 		trace_suspend_resume(TPS("timekeeping_freeze"),
 				     smp_processor_id(), false);
 	} else {

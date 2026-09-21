@@ -48,8 +48,6 @@
 #include <linux/nodemask.h>
 #include <linux/moduleparam.h>
 #include <linux/uaccess.h>
-#include <linux/bug.h>
-#include <linux/delay.h>
 #include <linux/nmi.h>
 #include <linux/kvm_para.h>
 
@@ -294,7 +292,7 @@ module_param_named(disable_numa, wq_disable_numa, bool, 0444);
 static bool wq_power_efficient = IS_ENABLED(CONFIG_WQ_POWER_EFFICIENT_DEFAULT);
 module_param_named(power_efficient, wq_power_efficient, bool, 0444);
 
-bool wq_online;				/* can kworkers be created yet? */
+static bool wq_online;			/* can kworkers be created yet? */
 
 static bool wq_numa_enabled;		/* unbound NUMA affinity enabled */
 
@@ -918,26 +916,6 @@ struct task_struct *wq_worker_sleeping(struct task_struct *task)
 }
 
 /**
- * wq_worker_last_func - retrieve worker's last work function
- *
- * Determine the last function a worker executed. This is called from
- * the scheduler to get a worker's last known identity.
- *
- * CONTEXT:
- * spin_lock_irq(rq->lock)
- *
- * Return:
- * The last work function %current executed as a worker, NULL if it
- * hasn't executed any work yet.
- */
-work_func_t wq_worker_last_func(struct task_struct *task)
-{
-	struct worker *worker = kthread_data(task);
-
-	return worker->last_func;
-}
-
-/**
  * worker_set_flags - set worker flags and adjust nr_running accordingly
  * @worker: self
  * @flags: flags to set
@@ -1302,12 +1280,6 @@ fail:
 	if (work_is_canceling(work))
 		return -ENOENT;
 	cpu_relax();
-	/*
-	 * The queueing is in progress in another context. If we keep
-	 * taking the pool->lock in a busy loop, the other context may
-	 * never get the lock. Give 1 usec delay to avoid this contention.
-	 */
-	udelay(1);
 	return -EAGAIN;
 }
 
@@ -1670,7 +1642,7 @@ static void worker_enter_idle(struct worker *worker)
 		mod_timer(&pool->idle_timer, jiffies + IDLE_WORKER_TIMEOUT);
 
 	/*
-	 * Sanity check nr_running.  Because unbind_workers() releases
+	 * Sanity check nr_running.  Because wq_unbind_fn() releases
 	 * pool->lock between setting %WORKER_UNBOUND and zapping
 	 * nr_running, the warning may trigger spuriously.  Check iff
 	 * unbind is not in progress.
@@ -2160,7 +2132,6 @@ __acquires(&pool->lock)
 		       current->comm, preempt_count(), task_pid_nr(current),
 		       worker->current_func);
 		debug_show_held_locks(current);
-		BUG_ON(PANIC_CORRUPTION);
 		dump_stack();
 	}
 
@@ -2179,9 +2150,6 @@ __acquires(&pool->lock)
 	/* clear cpu intensive status */
 	if (unlikely(cpu_intensive))
 		worker_clr_flags(worker, WORKER_CPU_INTENSIVE);
-
-	/* tag the worker for identification in schedule() */
-	worker->last_func = worker->current_func;
 
 	/* we're done with it, release */
 	hash_del(&worker->hentry);
@@ -4628,8 +4596,9 @@ void show_workqueue_state(void)
  * cpu comes back online.
  */
 
-static void unbind_workers(int cpu)
+static void wq_unbind_fn(struct work_struct *work)
 {
+	int cpu = smp_processor_id();
 	struct worker_pool *pool;
 	struct worker *worker;
 
@@ -4826,13 +4795,12 @@ int workqueue_online_cpu(unsigned int cpu)
 
 int workqueue_offline_cpu(unsigned int cpu)
 {
+	struct work_struct unbind_work;
 	struct workqueue_struct *wq;
 
 	/* unbinding per-cpu workers should happen on the local CPU */
-	if (WARN_ON(cpu != smp_processor_id()))
-		return -1;
-
-	unbind_workers(cpu);
+	INIT_WORK_ONSTACK(&unbind_work, wq_unbind_fn);
+	queue_work_on(cpu, system_highpri_wq, &unbind_work);
 
 	/* update NUMA affinity of unbound workqueues */
 	mutex_lock(&wq_pool_mutex);
@@ -4840,6 +4808,9 @@ int workqueue_offline_cpu(unsigned int cpu)
 		wq_update_unbound_numa(wq, cpu, false);
 	mutex_unlock(&wq_pool_mutex);
 
+	/* wait for per-cpu unbinding to finish */
+	flush_work(&unbind_work);
+	destroy_work_on_stack(&unbind_work);
 	return 0;
 }
 

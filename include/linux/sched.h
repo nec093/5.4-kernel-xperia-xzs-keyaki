@@ -231,10 +231,6 @@ struct sched_capacity_reqs {
 	unsigned long total;
 };
 
-/* threadgroup helpers are out-of-line here (defined in kernel/sched/core.c) */
-extern void threadgroup_change_begin(struct task_struct *tsk);
-extern void threadgroup_change_end(struct task_struct *tsk);
-
 extern cpumask_var_t			cpu_isolated_map;
 
 #ifdef CONFIG_HOTPLUG_CPU

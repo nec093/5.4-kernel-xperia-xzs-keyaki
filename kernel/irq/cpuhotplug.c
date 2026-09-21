@@ -11,7 +11,6 @@
 #include <linux/interrupt.h>
 #include <linux/ratelimit.h>
 #include <linux/irq.h>
-#include <linux/cpumask.h>
 
 #include "internals.h"
 
@@ -109,10 +108,6 @@ static bool migrate_one_irq(struct irq_desc *desc)
 	if (maskchip && chip->irq_mask)
 		chip->irq_mask(d);
 
-	cpumask_copy(&available_cpus, affinity);
-	cpumask_andnot(&available_cpus, &available_cpus, cpu_isolated_mask);
-	affinity = &available_cpus;
-
 	if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
 		/*
 		 * If the interrupt is managed, then shut it down and leave
@@ -164,9 +159,6 @@ void irq_migrate_all_off_this_cpu(void)
 		bool affinity_broken;
 
 		desc = irq_to_desc(irq);
-		if (!desc)
-			continue;
-
 		raw_spin_lock(&desc->lock);
 		affinity_broken = migrate_one_irq(desc);
 		raw_spin_unlock(&desc->lock);

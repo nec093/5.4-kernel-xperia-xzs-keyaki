@@ -238,7 +238,6 @@ SYSCALL_DEFINE2(settimeofday, struct timeval __user *, tv,
 {
 	struct timespec64 new_ts;
 	struct timeval user_tv;
-	struct timespec	new_ts = {0};
 	struct timezone new_tz;
 
 	if (tv) {

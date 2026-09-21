@@ -65,7 +65,6 @@
 #include <linux/sysfs.h>
 
 #include <linux/uaccess.h>
-#include "sched/tune.h"
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
@@ -873,7 +872,6 @@ void __noreturn do_exit(long code)
 	exit_signals(tsk);  /* sets PF_EXITING */
 
 	sched_exit(tsk);
-	schedtune_exit_task(tsk);
 
 	/* sync mm's RSS info before statistics gathering */
 	if (tsk->mm)
