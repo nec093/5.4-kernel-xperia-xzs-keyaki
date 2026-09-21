@@ -971,20 +971,7 @@ static void release_bdi(struct kref *ref)
 	WARN_ON_ONCE(bdi->dev);
 	wb_exit(&bdi->wb);
 	cgwb_bdi_exit(bdi);
-}
-
-static void release_bdi(struct kref *ref)
-{
-	struct backing_dev_info *bdi =
-			container_of(ref, struct backing_dev_info, refcnt);
-
-	bdi_exit(bdi);
 	kfree(bdi);
-}
-
-void bdi_put(struct backing_dev_info *bdi)
-{
-	kref_put(&bdi->refcnt, release_bdi);
 }
 
 void bdi_put(struct backing_dev_info *bdi)

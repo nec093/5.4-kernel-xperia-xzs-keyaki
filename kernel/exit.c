@@ -594,7 +594,7 @@ static void exit_mm(void)
 	task_unlock(current);
 	mm_update_next_owner(mm);
 	mmput(mm);
-	set_tsk_thread_flag(tsk, TIF_MM_RELEASED);
+	set_thread_flag(TIF_MM_RELEASED);
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
 }
