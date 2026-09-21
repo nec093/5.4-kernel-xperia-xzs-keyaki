@@ -682,7 +682,7 @@ static int sd_tuning_rx_cmd(struct rtsx_usb_sdmmc *host,
 		u8 opcode, u8 sample_point)
 {
 	int err;
-	struct mmc_command cmd = {};
+	struct mmc_command cmd = {0};
 
 	err = sd_change_phase(host, sample_point, 0);
 	if (err)
@@ -909,7 +909,7 @@ static int sd_set_bus_width(struct rtsx_usb_sdmmc *host,
 		unsigned char bus_width)
 {
 	int err = 0;
-	static const u8 width[] = {
+	u8 width[] = {
 		[MMC_BUS_WIDTH_1] = SD_BUS_WIDTH_1BIT,
 		[MMC_BUS_WIDTH_4] = SD_BUS_WIDTH_4BIT,
 		[MMC_BUS_WIDTH_8] = SD_BUS_WIDTH_8BIT,
@@ -1355,7 +1355,6 @@ static int rtsx_usb_sdmmc_drv_probe(struct platform_device *pdev)
 #ifdef RTSX_USB_USE_LEDS_CLASS
 	int err;
 #endif
-	int ret;
 
 	ucr = usb_get_intfdata(to_usb_interface(pdev->dev.parent));
 	if (!ucr)
@@ -1375,8 +1374,6 @@ static int rtsx_usb_sdmmc_drv_probe(struct platform_device *pdev)
 
 	mutex_init(&host->host_mutex);
 	rtsx_usb_init_host(host);
-	pm_runtime_use_autosuspend(&pdev->dev);
-	pm_runtime_set_autosuspend_delay(&pdev->dev, 50);
 	pm_runtime_enable(&pdev->dev);
 
 #ifdef RTSX_USB_USE_LEDS_CLASS
@@ -1394,15 +1391,7 @@ static int rtsx_usb_sdmmc_drv_probe(struct platform_device *pdev)
 	INIT_WORK(&host->led_work, rtsx_usb_update_led);
 
 #endif
-	ret = mmc_add_host(mmc);
-	if (ret) {
-#ifdef RTSX_USB_USE_LEDS_CLASS
-		led_classdev_unregister(&host->led);
-#endif
-		mmc_free_host(mmc);
-		pm_runtime_disable(&pdev->dev);
-		return ret;
-	}
+	mmc_add_host(mmc);
 
 	return 0;
 }
@@ -1439,7 +1428,6 @@ static int rtsx_usb_sdmmc_drv_remove(struct platform_device *pdev)
 
 	mmc_free_host(mmc);
 	pm_runtime_disable(&pdev->dev);
-	pm_runtime_dont_use_autosuspend(&pdev->dev);
 	platform_set_drvdata(pdev, NULL);
 
 	dev_dbg(&(pdev->dev),

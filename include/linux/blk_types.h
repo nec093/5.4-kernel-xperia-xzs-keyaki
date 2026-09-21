@@ -279,6 +279,7 @@ enum req_flag_bits {
 #define REQ_IDLE		(1ULL << __REQ_IDLE)
 #define REQ_INTEGRITY		(1ULL << __REQ_INTEGRITY)
 #define REQ_NOENCRYPT		(1ULL << __REQ_NOENCRYPT)
+#define REQ_BARRIER		(1ULL << __REQ_BARRIER)
 #define REQ_FUA			(1ULL << __REQ_FUA)
 #define REQ_PREFLUSH		(1ULL << __REQ_PREFLUSH)
 #define REQ_RAHEAD		(1ULL << __REQ_RAHEAD)
