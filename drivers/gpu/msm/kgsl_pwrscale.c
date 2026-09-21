@@ -932,18 +932,7 @@ static int opp_notify(struct notifier_block *nb,
 static int kgsl_opp_add_notifier(struct device *dev,
 		struct notifier_block *nb)
 {
-	struct srcu_notifier_head *nh;
-	int ret = 0;
-
-	rcu_read_lock();
-	nh = dev_pm_opp_get_notifier(dev);
-	if (IS_ERR(nh))
-		ret = PTR_ERR(nh);
-	rcu_read_unlock();
-	if (!ret)
-		ret = srcu_notifier_chain_register(nh, nb);
-
-	return ret;
+	return dev_pm_opp_register_notifier(dev, nb);
 }
 
 /*
@@ -957,18 +946,7 @@ static int kgsl_opp_add_notifier(struct device *dev,
 static int kgsl_opp_remove_notifier(struct device *dev,
 		struct notifier_block *nb)
 {
-	struct srcu_notifier_head *nh;
-	int ret = 0;
-
-	rcu_read_lock();
-	nh = dev_pm_opp_get_notifier(dev);
-	if (IS_ERR(nh))
-		ret = PTR_ERR(nh);
-	rcu_read_unlock();
-	if (!ret)
-		ret = srcu_notifier_chain_unregister(nh, nb);
-
-	return ret;
+	return dev_pm_opp_unregister_notifier(dev, nb);
 }
 
 /*
