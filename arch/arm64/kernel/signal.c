@@ -179,6 +179,9 @@ static int preserve_fpsimd_context(struct fpsimd_context __user *ctx)
 	struct fpsimd_state *fpsimd = &current->thread.fpsimd_state;
 	int err;
 
+	/* dump the hardware registers to the fpsimd_state structure */
+	fpsimd_preserve_current_state();
+
 	/* copy the FP and status/control registers */
 	err = __copy_to_user(ctx->vregs, fpsimd->vregs, sizeof(fpsimd->vregs));
 	__put_user_error(fpsimd->fpsr, &ctx->fpsr, err);
@@ -210,8 +213,6 @@ static int restore_fpsimd_context(struct fpsimd_context __user *ctx)
 			       sizeof(fpsimd.vregs));
 	__get_user_error(fpsimd.fpsr, &ctx->fpsr, err);
 	__get_user_error(fpsimd.fpcr, &ctx->fpcr, err);
-
-	clear_thread_flag(TIF_SVE);
 
 	/* load the hardware registers from the fpsimd_state structure */
 	if (!err)

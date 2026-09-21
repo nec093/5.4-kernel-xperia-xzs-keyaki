@@ -168,11 +168,11 @@ int fscrypt_has_permitted_context(struct inode *parent, struct inode *child)
 		return 1;
 
 	/* No restrictions if the parent directory is unencrypted */
-	if (!IS_ENCRYPTED(parent))
+	if (!cops->is_encrypted(parent))
 		return 1;
 
 	/* Encrypted directories must not contain unencrypted files */
-	if (!IS_ENCRYPTED(child))
+	if (!cops->is_encrypted(child))
 		return 0;
 
 	/*

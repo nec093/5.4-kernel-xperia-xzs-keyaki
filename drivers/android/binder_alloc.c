@@ -27,6 +27,7 @@
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/list_lru.h>
 #include "binder_alloc.h"
 #include "binder_trace.h"
@@ -939,7 +940,7 @@ enum lru_status binder_alloc_free_page(struct list_head *item,
 		zap_page_range(vma,
 			       page_addr +
 			       alloc->user_buffer_offset,
-			       PAGE_SIZE, NULL);
+			       PAGE_SIZE);
 
 		trace_binder_unmap_user_end(alloc, index);
 	}

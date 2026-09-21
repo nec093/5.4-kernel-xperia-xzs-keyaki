@@ -7,6 +7,7 @@
 
 #include <linux/sched/numa_balancing.h>
 #include <linux/tracepoint.h>
+#include <linux/sched/idle.h>
 #include <linux/binfmts.h>
 
 struct rq;

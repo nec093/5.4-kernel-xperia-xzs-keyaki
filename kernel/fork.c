@@ -89,7 +89,6 @@
 #include <linux/sysctl.h>
 #include <linux/kcov.h>
 #include <linux/cpufreq_times.h>
-#include <linux/scs.h>
 #include <linux/livepatch.h>
 #include <linux/thread_info.h>
 
@@ -363,7 +362,6 @@ void put_task_stack(struct task_struct *tsk)
 
 void free_task(struct task_struct *tsk)
 {
-	scs_release(tsk);
 	cpufreq_task_times_exit(tsk);
 
 #ifndef CONFIG_THREAD_INFO_IN_TASK
@@ -559,7 +557,6 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	clear_user_return_notifier(tsk);
 	clear_tsk_need_resched(tsk);
 	set_task_stack_end_magic(tsk);
-	scs_task_init(tsk);
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 	tsk->stack_canary = get_random_canary();
@@ -654,7 +651,6 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		if (!tmp)
 			goto fail_nomem;
 		*tmp = *mpnt;
-		INIT_VMA(tmp);
 		retval = vma_dup_policy(mpnt, tmp);
 		if (retval)
 			goto fail_nomem_policy;
@@ -1820,10 +1816,6 @@ static __latent_entropy struct task_struct *copy_process(
 	retval = copy_thread_tls(clone_flags, stack_start, stack_size, p, tls);
 	if (retval)
 		goto bad_fork_cleanup_io;
-	retval = scs_prepare(p, node);
-	if (retval)
-		goto bad_fork_cleanup_thread;
-
 	if (pid != &init_struct_pid) {
 		pid = alloc_pid(p->nsproxy->pid_ns_for_children);
 		if (IS_ERR(pid)) {
@@ -2037,8 +2029,8 @@ bad_fork_cleanup_audit:
 bad_fork_cleanup_perf:
 	perf_event_free_task(p);
 bad_fork_cleanup_policy:
-	lockdep_free_task(p);
 	free_task_load_ptrs(p);
+	lockdep_free_task(p);
 #ifdef CONFIG_NUMA
 	mpol_put(p->mempolicy);
 bad_fork_cleanup_threadgroup_lock:

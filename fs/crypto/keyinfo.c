@@ -18,7 +18,16 @@
 
 static struct crypto_shash *essiv_hash_tfm;
 
-static struct crypto_shash *essiv_hash_tfm;
+static void derive_crypt_complete(struct crypto_async_request *req, int rc)
+{
+	struct fscrypt_completion_result *ecr = req->data;
+
+	if (rc == -EINPROGRESS)
+		return;
+
+	ecr->res = rc;
+	complete(&ecr->completion);
+}
 
 /**
  * derive_key_aes() - Derive a key using AES-128-ECB
@@ -34,7 +43,7 @@ static int derive_key_aes(u8 deriving_key[FS_AES_128_ECB_KEY_SIZE],
 {
 	int res = 0;
 	struct skcipher_request *req = NULL;
-	DECLARE_CRYPTO_WAIT(wait);
+	DECLARE_FS_COMPLETION_RESULT(ecr);
 	struct scatterlist src_sg, dst_sg;
 	struct crypto_skcipher *tfm = crypto_alloc_skcipher("ecb(aes)", 0, 0);
 
@@ -51,7 +60,7 @@ static int derive_key_aes(u8 deriving_key[FS_AES_128_ECB_KEY_SIZE],
 	}
 	skcipher_request_set_callback(req,
 			CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP,
-			crypto_req_done, &wait);
+			derive_crypt_complete, &ecr);
 	res = crypto_skcipher_setkey(tfm, deriving_key,
 					FS_AES_128_ECB_KEY_SIZE);
 	if (res < 0)
@@ -61,7 +70,11 @@ static int derive_key_aes(u8 deriving_key[FS_AES_128_ECB_KEY_SIZE],
 	sg_init_one(&dst_sg, derived_raw_key, source_key->size);
 	skcipher_request_set_crypt(req, &src_sg, &dst_sg, source_key->size,
 				   NULL);
-	res = crypto_wait_req(crypto_skcipher_encrypt(req), &wait);
+	res = crypto_skcipher_encrypt(req);
+	if (res == -EINPROGRESS || res == -EBUSY) {
+		wait_for_completion(&ecr.completion);
+		res = ecr.res;
+	}
 out:
 	skcipher_request_free(req);
 	crypto_free_skcipher(tfm);
@@ -69,7 +82,7 @@ out:
 }
 
 static int validate_user_key(struct fscrypt_info *crypt_info,
-			struct fscrypt_context *ctx,
+			struct fscrypt_context *ctx, u8 *raw_key,
 			const char *prefix, int min_keysize)
 {
 	char *description;
@@ -136,12 +149,10 @@ static const struct {
 					     FS_AES_128_CBC_KEY_SIZE },
 	[FS_ENCRYPTION_MODE_AES_128_CTS] = { "cts(cbc(aes))",
 					     FS_AES_128_CTS_KEY_SIZE },
-	[FS_ENCRYPTION_MODE_PRIVATE]	 = { "bugon",
-					     FS_AES_256_XTS_KEY_SIZE },
 };
 
 static int determine_cipher_type(struct fscrypt_info *ci, struct inode *inode,
-		const char **cipher_str_ret, int *keysize_ret, int *fname)
+				 const char **cipher_str_ret, int *keysize_ret)
 {
 	u32 mode;
 
@@ -153,12 +164,9 @@ static int determine_cipher_type(struct fscrypt_info *ci, struct inode *inode,
 	}
 
 	if (S_ISREG(inode->i_mode)) {
-		ci->ci_mode = CI_DATA_MODE;
 		mode = ci->ci_data_mode;
 	} else if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode)) {
-		ci->ci_mode = CI_FNAME_MODE;
 		mode = ci->ci_filename_mode;
-		*fname = 1;
 	} else {
 		WARN_ONCE(1, "fscrypt: filesystem tried to load encryption info for inode %lu, which is not encryptable (file type %d)\n",
 			  inode->i_ino, (inode->i_mode & S_IFMT));
@@ -177,7 +185,6 @@ static void put_crypt_info(struct fscrypt_info *ci)
 
 	crypto_free_skcipher(ci->ci_ctfm);
 	crypto_free_cipher(ci->ci_essiv_tfm);
-	memset(ci, 0, sizeof(*ci)); /* sanitizes ->ci_raw_key */
 	kmem_cache_free(fscrypt_info_cachep, ci);
 }
 
@@ -247,12 +254,6 @@ void __exit fscrypt_essiv_cleanup(void)
 	crypto_free_shash(essiv_hash_tfm);
 }
 
-static int fscrypt_data_encryption_mode(struct inode *inode)
-{
-	return fscrypt_should_be_processed_by_ice(inode) ?
-	FS_ENCRYPTION_MODE_PRIVATE : FS_ENCRYPTION_MODE_AES_256_XTS;
-}
-
 int fscrypt_get_encryption_info(struct inode *inode)
 {
 	struct fscrypt_info *crypt_info;
@@ -260,8 +261,8 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	struct crypto_skcipher *ctfm;
 	const char *cipher_str;
 	int keysize;
+	u8 *raw_key = NULL;
 	int res;
-	int fname = 0;
 
 	if (inode->i_crypt_info)
 		return 0;
@@ -278,8 +279,7 @@ int fscrypt_get_encryption_info(struct inode *inode)
 		/* Fake up a context for an unencrypted directory */
 		memset(&ctx, 0, sizeof(ctx));
 		ctx.format = FS_ENCRYPTION_CONTEXT_FORMAT_V1;
-		ctx.contents_encryption_mode =
-			fscrypt_data_encryption_mode(inode);
+		ctx.contents_encryption_mode = FS_ENCRYPTION_MODE_AES_256_XTS;
 		ctx.filenames_encryption_mode = FS_ENCRYPTION_MODE_AES_256_CTS;
 		memset(ctx.master_key_descriptor, 0x42, FS_KEY_DESCRIPTOR_SIZE);
 	} else if (res != sizeof(ctx)) {
@@ -304,8 +304,7 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
 				sizeof(crypt_info->ci_master_key));
 
-	res = determine_cipher_type(crypt_info, inode, &cipher_str, &keysize,
-				&fname);
+	res = determine_cipher_type(crypt_info, inode, &cipher_str, &keysize);
 	if (res)
 		goto out;
 
@@ -314,6 +313,9 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	 * crypto API as part of key derivation.
 	 */
 	res = -ENOMEM;
+	raw_key = kmalloc(FS_MAX_KEY_SIZE, GFP_NOFS);
+	if (!raw_key)
+		goto out;
 
 	res = validate_user_key(crypt_info, &ctx, raw_key, FS_KEY_DESC_PREFIX,
 				keysize);
@@ -326,23 +328,9 @@ int fscrypt_get_encryption_info(struct inode *inode)
 				res = -ENOKEY;
 			goto out;
 		}
-		res = 0;
 	} else if (res) {
 		goto out;
 	}
-
-	if (is_private_data_mode(crypt_info)) {
-		if (!fscrypt_is_ice_capable(inode->i_sb)) {
-			pr_warn("%s: ICE support not available\n",
-					__func__);
-			res = -EINVAL;
-			goto out;
-		}
-		/* Let's encrypt/decrypt by ICE */
-		goto do_ice;
-	}
-
-
 	ctfm = crypto_alloc_skcipher(cipher_str, 0, 0);
 	if (!ctfm || IS_ERR(ctfm)) {
 		res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;
@@ -357,7 +345,7 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	 * if the provided key is longer than keysize, we use the first
 	 * keysize bytes of the derived key only
 	 */
-	res = crypto_skcipher_setkey(ctfm, crypt_info->ci_raw_key, keysize);
+	res = crypto_skcipher_setkey(ctfm, raw_key, keysize);
 	if (res)
 		goto out;
 
@@ -376,13 +364,24 @@ out:
 	if (res == -ENOKEY)
 		res = 0;
 	put_crypt_info(crypt_info);
+	kzfree(raw_key);
 	return res;
 }
 EXPORT_SYMBOL(fscrypt_get_encryption_info);
 
-void fscrypt_put_encryption_info(struct inode *inode)
+void fscrypt_put_encryption_info(struct inode *inode, struct fscrypt_info *ci)
 {
-	put_crypt_info(inode->i_crypt_info);
-	inode->i_crypt_info = NULL;
+	struct fscrypt_info *prev;
+
+	if (ci == NULL)
+		ci = ACCESS_ONCE(inode->i_crypt_info);
+	if (ci == NULL)
+		return;
+
+	prev = cmpxchg(&inode->i_crypt_info, ci, NULL);
+	if (prev != ci)
+		return;
+
+	put_crypt_info(ci);
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);

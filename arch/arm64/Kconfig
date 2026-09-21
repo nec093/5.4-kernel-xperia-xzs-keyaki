@@ -591,10 +591,6 @@ config QCOM_FALKOR_ERRATUM_E1041
 
 endmenu
 
-	  If unsure, say Y.
-
-endmenu
-
 choice
 	prompt "Page size"
 	default ARM64_4K_PAGES

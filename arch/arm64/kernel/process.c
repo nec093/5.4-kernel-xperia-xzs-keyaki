@@ -88,16 +88,6 @@ void arch_cpu_idle(void)
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
 }
 
-void arch_cpu_idle_enter(void)
-{
-	idle_notifier_call_chain(IDLE_START);
-}
-
-void arch_cpu_idle_exit(void)
-{
-	idle_notifier_call_chain(IDLE_END);
-}
-
 #ifdef CONFIG_HOTPLUG_CPU
 void arch_cpu_idle_dead(void)
 {
@@ -180,64 +170,6 @@ void machine_restart(char *cmd)
 	while (1);
 }
 
-/*
- * dump a block of kernel memory from around the given address
- */
-static void show_data(unsigned long addr, int nbytes, const char *name)
-{
-	int	i, j;
-	int	nlines;
-	u32	*p;
-
-	/*
-	 * don't attempt to dump non-kernel addresses or
-	 * values that are probably just small negative numbers
-	 */
-	if (addr < KIMAGE_VADDR || addr > -256UL)
-		return;
-
-	printk("\n%s: %#lx:\n", name, addr);
-
-	/*
-	 * round address down to a 32 bit boundary
-	 * and always dump a multiple of 32 bytes
-	 */
-	p = (u32 *)(addr & ~(sizeof(u32) - 1));
-	nbytes += (addr & (sizeof(u32) - 1));
-	nlines = (nbytes + 31) / 32;
-
-
-	for (i = 0; i < nlines; i++) {
-		/*
-		 * just display low 16 bits of address to keep
-		 * each line of the dump < 80 characters
-		 */
-		printk("%04lx ", (unsigned long)p & 0xffff);
-		for (j = 0; j < 8; j++) {
-			u32	data;
-			if (probe_kernel_address(p, data)) {
-				pr_cont(" ********");
-			} else {
-				pr_cont(" %08x", data);
-			}
-			++p;
-		}
-		pr_cont("\n");
-	}
-}
-
-static void show_extra_register_data(struct pt_regs *regs, int nbytes)
-{
-	mm_segment_t fs;
-
-	fs = get_fs();
-	set_fs(KERNEL_DS);
-	show_data(regs->pc - nbytes, nbytes * 2, "PC");
-	show_data(regs->regs[30] - nbytes, nbytes * 2, "LR");
-	show_data(regs->sp - nbytes, nbytes * 2, "SP");
-	set_fs(fs);
-}
-
 void __show_regs(struct pt_regs *regs)
 {
 	int i, top_reg;
@@ -307,27 +239,11 @@ void release_thread(struct task_struct *dead_task)
 {
 }
 
-void arch_release_task_struct(struct task_struct *tsk)
-{
-	fpsimd_release_task(tsk);
-}
-
-/*
- * src and dst may temporarily have aliased sve_state after task_struct
- * is copied.  We cannot fix this properly here, because src may have
- * live SVE state and dst's thread_info may not exist yet, so tweaking
- * either src's or dst's TIF_SVE is not safe.
- *
- * The unaliasing is done in copy_thread() instead.  This works because
- * dst is not schedulable or traceable until both of these functions
- * have been called.
- */
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
 	if (current->mm)
 		fpsimd_preserve_current_state();
 	*dst = *src;
-
 	return 0;
 }
 
@@ -348,13 +264,6 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	 * registers for p.
 	 */
 	fpsimd_flush_task_state(p);
-
-	/*
-	 * Unalias p->thread.sve_state (if any) from the parent task
-	 * and disable discard SVE state for p:
-	 */
-	clear_tsk_thread_flag(p, TIF_SVE);
-	p->thread.sve_state = NULL;
 
 	if (likely(!(p->flags & PF_KTHREAD))) {
 		*childregs = *current_pt_regs();

@@ -71,18 +71,15 @@
 
 #define STACK_TOP_MAX		TASK_SIZE_64
 #ifdef CONFIG_COMPAT
-#define AARCH32_KUSER_HELPERS_BASE 0xffff0000
+#define AARCH32_VECTORS_BASE	0xffff0000
 #define STACK_TOP		(test_thread_flag(TIF_32BIT) ? \
-				AARCH32_KUSER_HELPERS_BASE : STACK_TOP_MAX)
+				AARCH32_VECTORS_BASE : STACK_TOP_MAX)
 #else
 #define STACK_TOP		STACK_TOP_MAX
 #endif /* CONFIG_COMPAT */
 
 extern phys_addr_t arm64_dma_phys_limit;
 #define ARCH_LOW_ADDRESS_LIMIT	(arm64_dma_phys_limit - 1)
-
-extern unsigned int boot_reason;
-extern unsigned int cold_boot;
 
 struct debug_info {
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
@@ -120,9 +117,6 @@ struct thread_struct {
 	unsigned long		tp2_value;
 #endif
 	struct fpsimd_state	fpsimd_state;
-	void			*sve_state;	/* SVE registers, if any */
-	unsigned int		sve_vl;		/* SVE vector length */
-	unsigned int		sve_vl_onexec;	/* SVE vl after next exec */
 	unsigned long		fault_address;	/* fault info */
 	unsigned long		fault_code;	/* ESR_EL1 value */
 	struct debug_info	debug;		/* debugging */
@@ -249,10 +243,6 @@ static inline void spin_lock_prefetch(const void *ptr)
 
 void cpu_enable_pan(const struct arm64_cpu_capabilities *__unused);
 void cpu_enable_cache_maint_trap(const struct arm64_cpu_capabilities *__unused);
-
-/* Userspace interface for PR_SVE_{SET,GET}_VL prctl()s: */
-#define SVE_SET_VL(arg)	sve_set_current_vl(arg)
-#define SVE_GET_VL()	sve_get_current_vl()
 
 #endif /* __ASSEMBLY__ */
 #endif /* __ASM_PROCESSOR_H */

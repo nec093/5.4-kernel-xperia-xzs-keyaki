@@ -1179,10 +1179,19 @@ exit:
 }
 
 
+static int msm_pcm_copy_user(struct snd_pcm_substream *substream, int channel,
+			unsigned long pos, void __user *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	return msm_pcm_copy(substream, channel, bytes_to_frames(runtime, pos), buf,
+		  bytes_to_frames(runtime, bytes));
+}
+
 static const struct snd_pcm_ops msm_pcm_ops = {
 	.open           = msm_pcm_open,
 	.prepare        = msm_pcm_prepare,
-	.copy           = msm_pcm_copy,
+	.copy_user           = msm_pcm_copy_user,
 	.hw_params	= msm_pcm_hw_params,
 	.ioctl          = msm_pcm_ioctl,
 #ifdef CONFIG_COMPAT

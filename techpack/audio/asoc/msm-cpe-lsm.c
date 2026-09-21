@@ -3283,6 +3283,15 @@ static int msm_asoc_cpe_lsm_probe(struct snd_soc_platform *platform)
 	return 0;
 }
 
+static int msm_cpe_lsm_copy_user(struct snd_pcm_substream *substream, int channel,
+			unsigned long pos, void __user *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	return msm_cpe_lsm_copy(substream, channel, bytes_to_frames(runtime, pos), buf,
+		  bytes_to_frames(runtime, bytes));
+}
+
 static const struct snd_pcm_ops msm_cpe_lsm_ops = {
 	.open = msm_cpe_lsm_open,
 	.close = msm_cpe_lsm_close,
@@ -3290,7 +3299,7 @@ static const struct snd_pcm_ops msm_cpe_lsm_ops = {
 	.prepare = msm_cpe_lsm_prepare,
 	.trigger = msm_cpe_lsm_trigger,
 	.pointer = msm_cpe_lsm_pointer,
-	.copy = msm_cpe_lsm_copy,
+	.copy_user = msm_cpe_lsm_copy_user,
 	.hw_params = msm_cpe_lsm_hwparams,
 	.compat_ioctl = msm_cpe_lsm_ioctl_compat,
 };

@@ -43,8 +43,6 @@
 #include <asm/system_misc.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
-#include <soc/qcom/scm.h>
-#include <trace/events/exception.h>
 
 #include <acpi/ghes.h>
 
@@ -305,8 +303,6 @@ static void __do_user_fault(struct task_struct *tsk, unsigned long addr,
 	const struct fault_info *inf;
 	unsigned int lsb = 0;
 
-	trace_user_fault(tsk, addr, esr);
-
 	if (unhandled_signal(tsk, sig) && show_unhandled_signals_ratelimited()) {
 		inf = esr_to_fault_info(esr);
 		pr_info("%s[%d]: unhandled %s (%d) at 0x%08lx, esr 0x%03x",
@@ -356,12 +352,14 @@ static void do_bad_area(unsigned long addr, unsigned int esr, struct pt_regs *re
 #define VM_FAULT_BADMAP		0x010000
 #define VM_FAULT_BADACCESS	0x020000
 
-static int __do_page_fault(struct vm_area_struct *vma, unsigned long addr,
+static int __do_page_fault(struct mm_struct *mm, unsigned long addr,
 			   unsigned int mm_flags, unsigned long vm_flags,
 			   struct task_struct *tsk)
 {
+	struct vm_area_struct *vma;
 	int fault;
 
+	vma = find_vma(mm, addr);
 	fault = VM_FAULT_BADMAP;
 	if (unlikely(!vma))
 		goto out;
@@ -404,7 +402,6 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	int fault, sig, code, major = 0;
 	unsigned long vm_flags = VM_READ | VM_WRITE | VM_EXEC;
 	unsigned int mm_flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
-	struct vm_area_struct *vma = NULL;
 
 	if (notify_page_fault(regs, esr))
 		return 0;
@@ -424,8 +421,7 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 
 	if (is_el0_instruction_abort(esr)) {
 		vm_flags = VM_EXEC;
-	} else if (((esr & ESR_ELx_WNR) && !(esr & ESR_ELx_CM)) ||
-			((esr & ESR_ELx_CM) && !(mm_flags & FAULT_FLAG_USER))) {
+	} else if ((esr & ESR_ELx_WNR) && !(esr & ESR_ELx_CM)) {
 		vm_flags = VM_WRITE;
 		mm_flags |= FAULT_FLAG_WRITE;
 	}
@@ -443,14 +439,6 @@ static int __kprobes do_page_fault(unsigned long addr, unsigned int esr,
 	}
 
 	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, regs, addr);
-
-	/*
-	 * let's try a speculative page fault without grabbing the
-	 * mmap_sem.
-	 */
-	fault = handle_speculative_fault(mm, addr, mm_flags, &vma);
-	if (fault != VM_FAULT_RETRY)
-		goto done;
 
 	/*
 	 * As per x86, we may deadlock here. However, since the kernel only
@@ -501,9 +489,6 @@ retry:
 		}
 	}
 	up_read(&mm->mmap_sem);
-
-	up_read(&mm->mmap_sem);
-done:
 
 	/*
 	 * Handle the "normal" (no error) case first.
@@ -574,34 +559,6 @@ no_context:
 	return 0;
 }
 
-#ifdef CONFIG_QCOM_TLB_EL2_HANDLER
-/*
- * TLB conflict is already handled in EL2. This routine should return zero
- * so that, do_mem_abort would not crash kernel thinking TLB conflict not
- * handled.
-*/
-static int do_tlb_conf_fault(unsigned long addr,
-				unsigned int esr,
-				struct pt_regs *regs)
-{ return 0; }
-#else
-static int do_tlb_conf_fault(unsigned long addr,
-				unsigned int esr,
-				struct pt_regs *regs)
-{
-#define SCM_TLB_CONFLICT_CMD	0x1F
-	struct scm_desc desc = {
-		.args[0] = addr,
-		.arginfo = SCM_ARGS(1),
-	};
-
-	if (scm_call2_atomic(SCM_SIP_FNID(SCM_SVC_MP, SCM_TLB_CONFLICT_CMD),
-						&desc))
-		return 1;
-
-	return 0;
-}
-#endif
 /*
  * First Level Translation Fault Handler
  *
@@ -735,7 +692,7 @@ static const struct fault_info fault_info[] = {
 	{ do_bad,		SIGBUS,  0,		"unknown 45"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 46"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 47"			},
-	{ do_tlb_conf_fault,	SIGBUS,  0,		"TLB conflict abort"		},
+	{ do_bad,		SIGBUS,  0,		"TLB conflict abort"		},
 	{ do_bad,		SIGBUS,  0,		"unknown 49"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 50"			},
 	{ do_bad,		SIGBUS,  0,		"unknown 51"			},

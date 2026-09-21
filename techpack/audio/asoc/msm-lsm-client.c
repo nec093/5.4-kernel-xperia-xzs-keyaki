@@ -2334,6 +2334,15 @@ static int msm_lsm_add_controls(struct snd_soc_pcm_runtime *rtd)
 	return ret;
 }
 
+static int msm_lsm_pcm_copy_user(struct snd_pcm_substream *substream, int channel,
+			unsigned long pos, void __user *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	return msm_lsm_pcm_copy(substream, channel, bytes_to_frames(runtime, pos), buf,
+		  bytes_to_frames(runtime, bytes));
+}
+
 static const struct snd_pcm_ops msm_lsm_ops = {
 	.open           = msm_lsm_open,
 	.close          = msm_lsm_close,
@@ -2341,7 +2350,7 @@ static const struct snd_pcm_ops msm_lsm_ops = {
 	.prepare	= msm_lsm_prepare,
 	.compat_ioctl   = msm_lsm_ioctl_compat,
 	.hw_params      = msm_lsm_hw_params,
-	.copy           = msm_lsm_pcm_copy,
+	.copy_user           = msm_lsm_pcm_copy_user,
 	.pointer        = msm_lsm_pcm_pointer,
 };
 

@@ -379,46 +379,10 @@ HOST_LOADLIBES := $(HOST_LFS_LIBS)
 # yylloc is defined in both dtc-lexer and dtc-parser (needs -fcommon on gcc >= 10 hosts)
 HOSTCFLAGS  += $(shell $(HOSTCC) -fcommon -E -x c /dev/null >/dev/null 2>&1 && echo -fcommon)
 
-ifeq ($(shell $(HOSTCC) -v 2>&1 | grep -c "clang version"), 1)
-HOSTCFLAGS  += -Wno-unused-value -Wno-unused-parameter \
-		-Wno-missing-field-initializers -fno-delete-null-pointer-checks
-endif
-
-# Decide whether to build built-in, modular, or both.
-# Normally, just do built-in.
-
-KBUILD_MODULES :=
-KBUILD_BUILTIN := 1
-
-# If we have only "make modules", don't compile built-in objects.
-ifeq ($(MAKECMDGOALS),modules)
-  KBUILD_BUILTIN :=
-endif
-
-# If we have "make <whatever> modules", compile modules
-# in addition to whatever we do anyway.
-# Just "make" or "make all" shall build modules as well
-
-ifneq ($(filter all _all modules,$(MAKECMDGOALS)),)
-  KBUILD_MODULES := 1
-endif
-
-ifeq ($(MAKECMDGOALS),)
-  KBUILD_MODULES := 1
-endif
-
-export KBUILD_MODULES KBUILD_BUILTIN
-export KBUILD_CHECKSRC KBUILD_SRC KBUILD_EXTMOD
-
-# We need some generic definitions (do not try to remake the file).
-scripts/Kbuild.include: ;
-include scripts/Kbuild.include
-
 # Make variables (CC, etc...)
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
 CC		= $(CROSS_COMPILE)gcc
-LDGOLD		= $(CROSS_COMPILE)ld.gold
 CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
 NM		= $(CROSS_COMPILE)nm
@@ -542,32 +506,6 @@ KBUILD_AFLAGS	+= $(CLANG_FLAGS)
 export CLANG_FLAGS
 endif
 
-ifeq ($(cc-name),clang)
-ifneq ($(CROSS_COMPILE),)
-CLANG_TRIPLE	?= $(CROSS_COMPILE)
-CLANG_FLAGS	+= --target=$(notdir $(CLANG_TRIPLE:%-=%))
-ifeq ($(shell $(srctree)/scripts/clang-android.sh $(CC) $(CLANG_FLAGS)), y)
-$(error "Clang with Android --target detected. Did you specify CLANG_TRIPLE?")
-endif
-GCC_TOOLCHAIN_DIR := $(dir $(shell which $(CROSS_COMPILE)readelf))
-CLANG_FLAGS	+= --prefix=$(GCC_TOOLCHAIN_DIR)
-GCC_TOOLCHAIN	:= $(realpath $(GCC_TOOLCHAIN_DIR)/..)
-endif
-ifneq ($(GCC_TOOLCHAIN),)
-CLANG_FLAGS	+= --gcc-toolchain=$(GCC_TOOLCHAIN)
-endif
-CLANG_FLAGS	+= -no-integrated-as
-CLANG_FLAGS	+= -Werror=unknown-warning-option
-KBUILD_CFLAGS	+= $(CLANG_FLAGS)
-KBUILD_AFLAGS	+= $(CLANG_FLAGS)
-endif
-
-ifeq ($(mixed-targets),1)
-# ===========================================================================
-# We're called with mixed targets (*config and build targets).
-# Handle them one by one.
-
-PHONY += $(MAKECMDGOALS) __build_one_by_one
 RETPOLINE_CFLAGS_GCC := -mindirect-branch=thunk-extern -mindirect-branch-register
 RETPOLINE_VDSO_CFLAGS_GCC := -mindirect-branch=thunk-inline -mindirect-branch-register
 RETPOLINE_CFLAGS_CLANG := -mretpoline-external-thunk
@@ -706,27 +644,9 @@ all: vmlinux
 
 KBUILD_CFLAGS	+= $(call cc-option,-fno-PIE)
 KBUILD_AFLAGS	+= $(call cc-option,-fno-PIE)
-CFLAGS_GCOV	:= -fprofile-arcs -ftest-coverage \
-	$(call cc-option,-fno-tree-loop-im) \
-	$(call cc-disable-warning,maybe-uninitialized,)
+CFLAGS_GCOV	:= -fprofile-arcs -ftest-coverage -fno-tree-loop-im $(call cc-disable-warning,maybe-uninitialized,)
 CFLAGS_KCOV	:= $(call cc-option,-fsanitize-coverage=trace-pc,)
 export CFLAGS_GCOV CFLAGS_KCOV
-
-# Make toolchain changes before including arch/$(SRCARCH)/Makefile to ensure
-# ar/cc/ld-* macros return correct values.
-ifdef CONFIG_LTO_CLANG
-# use GNU gold with LLVMgold for LTO linking, and LD for vmlinux_link
-LDFINAL_vmlinux := $(LD)
-LD		:= $(LDGOLD)
-LDFLAGS		+= -plugin LLVMgold.so
-LDFLAGS		+= -plugin-opt=-function-sections
-LDFLAGS		+= -plugin-opt=-data-sections
-# use llvm-ar for building symbol tables from IR files, and llvm-dis instead
-# of objdump for processing symbol versions and exports
-LLVM_AR		:= llvm-ar
-LLVM_DIS	:= llvm-dis
-export LLVM_AR LLVM_DIS
-endif
 
 # The arch Makefile can set ARCH_{CPP,A,C}FLAGS to override the default
 # values of the respective KBUILD_* variables
@@ -743,74 +663,10 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, int-in-bool-context)
 KBUILD_CFLAGS	+= $(call cc-disable-warning, address-of-packed-member)
 KBUILD_CFLAGS	+= $(call cc-disable-warning, attribute-alias)
 
-ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
-KBUILD_CFLAGS	+= $(call cc-option,-ffunction-sections,)
-KBUILD_CFLAGS	+= $(call cc-option,-fdata-sections,)
-endif
-
-ifdef CONFIG_LTO_CLANG
-lto-clang-flags	:= -flto -fvisibility=hidden
-
-# allow disabling only clang LTO where needed
-DISABLE_LTO_CLANG := -fno-lto -fvisibility=default
-export DISABLE_LTO_CLANG
-endif
-
-ifdef CONFIG_LTO
-lto-flags	:= $(lto-clang-flags)
-KBUILD_CFLAGS	+= $(lto-flags)
-
-DISABLE_LTO	:= $(DISABLE_LTO_CLANG)
-export DISABLE_LTO
-
-# LDFINAL_vmlinux and LDFLAGS_FINAL_vmlinux can be set to override
-# the linker and flags for vmlinux_link.
-export LDFINAL_vmlinux LDFLAGS_FINAL_vmlinux
-endif
-
-ifdef CONFIG_CFI_CLANG
-cfi-clang-flags	+= -fsanitize=cfi
-DISABLE_CFI_CLANG := -fno-sanitize=cfi
-ifdef CONFIG_MODULES
-cfi-clang-flags	+= -fsanitize-cfi-cross-dso
-DISABLE_CFI_CLANG += -fno-sanitize-cfi-cross-dso
-endif
-ifdef CONFIG_CFI_PERMISSIVE
-cfi-clang-flags	+= -fsanitize-recover=cfi -fno-sanitize-trap=cfi
-endif
-
-# also disable CFI when LTO is disabled
-DISABLE_LTO_CLANG += $(DISABLE_CFI_CLANG)
-# allow disabling only clang CFI where needed
-export DISABLE_CFI_CLANG
-endif
-
-ifdef CONFIG_CFI
-# cfi-flags are re-tested in prepare-compiler-check
-cfi-flags	:= $(cfi-clang-flags)
-KBUILD_CFLAGS	+= $(cfi-flags)
-
-DISABLE_CFI	:= $(DISABLE_CFI_CLANG)
-DISABLE_LTO	+= $(DISABLE_CFI)
-export DISABLE_CFI
-endif
-
-ifdef CONFIG_SHADOW_CALL_STACK
-scs-flags	:= -fsanitize=shadow-call-stack
-KBUILD_CFLAGS	+= $(scs-flags)
-DISABLE_SCS	:= -fno-sanitize=shadow-call-stack
-export DISABLE_SCS
-endif
-
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
 KBUILD_CFLAGS   += -O2
-endif
-endif
-
-ifdef CONFIG_CC_WERROR
-KBUILD_CFLAGS	+= -Werror
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
@@ -865,8 +721,6 @@ ifeq ($(cc-name),clang)
 KBUILD_CPPFLAGS += $(call cc-option,-Qunused-arguments,)
 KBUILD_CFLAGS += $(call cc-disable-warning, format-invalid-specifier)
 KBUILD_CFLAGS += $(call cc-disable-warning, gnu)
-KBUILD_CFLAGS += $(call cc-disable-warning, address-of-packed-member)
-KBUILD_CFLAGS += $(call cc-disable-warning, duplicate-decl-specifier)
 # Quiet clang warning: comparison of unsigned expression < 0 is always false
 KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # CLANG uses a _MergedGlobals as optimization, but this breaks modpost, as the
@@ -885,7 +739,6 @@ KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 # These result in bogus false positives
 KBUILD_CFLAGS += $(call cc-disable-warning, dangling-pointer)
 
-KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 ifdef CONFIG_FRAME_POINTER
 KBUILD_CFLAGS	+= -fno-omit-frame-pointer -fno-optimize-sibling-calls
 else
@@ -1012,12 +865,6 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=designated-init)
 
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
-
-# ensure -fcf-protection is disabled when using retpoline as it is
-# incompatible with -mindirect-branch=thunk-extern
-ifdef CONFIG_RETPOLINE
-KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
-endif
 
 # use the deterministic mode of AR if available
 KBUILD_ARFLAGS := $(call ar-option,D)
@@ -1304,22 +1151,6 @@ endif
 # CC_STACKPROTECTOR_STRONG! Why did it build with _REGULAR?!")
 PHONY += prepare-compiler-check
 prepare-compiler-check: FORCE
-# Make sure we're using a supported toolchain with LTO_CLANG
-ifdef CONFIG_LTO_CLANG
-  ifneq ($(call clang-ifversion, -ge, 0500, y), y)
-	@echo Cannot use CONFIG_LTO_CLANG: requires clang 5.0 or later >&2 && exit 1
-  endif
-  ifneq ($(call gold-ifversion, -ge, 112000000, y), y)
-	@echo Cannot use CONFIG_LTO_CLANG: requires GNU gold 1.12 or later >&2 && exit 1
-  endif
-endif
-# Make sure compiler supports LTO flags
-ifdef lto-flags
-  ifeq ($(call cc-option, $(lto-flags)),)
-	@echo Cannot use CONFIG_LTO: $(lto-flags) not supported by compiler \
-		>&2 && exit 1
-  endif
-endif
 # Make sure compiler supports requested stack protector flag.
 ifdef stackp-name
   ifeq ($(call cc-option, $(stackp-flag)),)
@@ -1332,16 +1163,6 @@ ifdef stackp-check
   ifneq ($(shell $(CONFIG_SHELL) $(stackp-check) $(CC) $(KBUILD_CPPFLAGS) $(biarch)),y)
 	@echo Cannot use CONFIG_CC_STACKPROTECTOR_$(stackp-name): \
                   $(stackp-flag) available but compiler is broken >&2 && exit 1
-  endif
-endif
-ifdef cfi-flags
-  ifeq ($(call cc-option, $(cfi-flags)),)
-	@echo Cannot use CONFIG_CFI: $(cfi-flags) not supported by compiler >&2 && exit 1
-  endif
-endif
-ifdef scs-flags
-  ifeq ($(call cc-option, $(scs-flags)),)
-	@echo Cannot use CONFIG_SHADOW_CALL_STACK: $(scs-flags) not supported by compiler >&2 && exit 1
   endif
 endif
 	@:
@@ -1810,8 +1631,7 @@ clean: $(clean-dirs)
 		-o -name modules.builtin -o -name '.tmp_*.o.*' \
 		-o -name '*.c.[012]*.*' \
 		-o -name '*.ll' \
-		-o -name '*.gcno' \
-		-o -name '*.*.symversions' \) -type f -print | xargs rm -f
+		-o -name '*.gcno' \) -type f -print | xargs rm -f
 
 # Generate tags for editors
 # ---------------------------------------------------------------------------

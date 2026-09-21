@@ -839,9 +839,18 @@ static snd_pcm_uframes_t msm_afe_pointer(struct snd_pcm_substream *substream)
 	return bytes_to_frames(runtime, (prtd->pcm_irq_pos));
 }
 
+static int msm_afe_copy_user(struct snd_pcm_substream *substream, int channel,
+			unsigned long pos, void __user *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	return msm_afe_copy(substream, channel, bytes_to_frames(runtime, pos), buf,
+		  bytes_to_frames(runtime, bytes));
+}
+
 static const struct snd_pcm_ops msm_afe_ops = {
 	.open           = msm_afe_open,
-	.copy           = msm_afe_copy,
+	.copy_user           = msm_afe_copy_user,
 	.hw_params	= msm_afe_hw_params,
 	.trigger	= msm_afe_trigger,
 	.close          = msm_afe_close,

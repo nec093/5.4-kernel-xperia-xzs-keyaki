@@ -47,8 +47,6 @@
 struct dentry *blk_debugfs_root;
 #endif
 
-#include <linux/math64.h>
-
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_complete);
@@ -1432,9 +1430,6 @@ static struct request *blk_old_get_request(struct request_queue *q,
 	/* q->queue_lock is unlocked at this point */
 	rq->__data_len = 0;
 	rq->__sector = (sector_t) -1;
-#ifdef CONFIG_PFK
-	rq->__dun = 0;
-#endif
 	rq->bio = rq->biotail = NULL;
 	return rq;
 }
@@ -1500,12 +1495,6 @@ static void part_round_stats_single(struct request_queue *q, int cpu,
 				    struct hd_struct *part, unsigned long now,
 				    unsigned int inflight)
 {
-	int inflight;
-
-	if (now == part->stamp)
-		return;
-
-	inflight = part_in_flight(q, part);
 	if (inflight) {
 		__part_stat_add(cpu, part, time_in_queue,
 				inflight * (now - part->stamp));
@@ -1664,9 +1653,6 @@ bool bio_attempt_front_merge(struct request_queue *q, struct request *req,
 	bio->bi_next = req->bio;
 	req->bio = bio;
 
-#ifdef CONFIG_PFK
-	req->__dun = bio->bi_iter.bi_dun;
-#endif
 	req->__sector = bio->bi_iter.bi_sector;
 	req->__data_len += bio->bi_iter.bi_size;
 	req->ioprio = ioprio_best(req->ioprio, bio_prio(bio));
@@ -1809,9 +1795,6 @@ void blk_init_request_from_bio(struct request *req, struct bio *bio)
 		req->cmd_flags |= REQ_FAILFAST_MASK;
 
 	req->__sector = bio->bi_iter.bi_sector;
-#ifdef CONFIG_PFK
-	req->__dun = bio->bi_iter.bi_dun;
-#endif
 	if (ioprio_valid(bio_prio(bio)))
 		req->ioprio = bio_prio(bio);
 	else if (ioc)
@@ -2129,10 +2112,6 @@ generic_make_request_checks(struct bio *bio)
 		break;
 	case REQ_OP_WRITE_ZEROES:
 		if (!q->limits.max_write_zeroes_sectors)
-			goto not_supported;
-		break;
-	case REQ_OP_WRITE_ZEROES:
-		if (!bdev_write_zeroes_sectors(bio->bi_bdev))
 			goto not_supported;
 		break;
 	default:
@@ -2774,15 +2753,6 @@ bool blk_update_request(struct request *req, blk_status_t error,
 	blk_account_io_completion(req, nr_bytes);
 
 	total_bytes = 0;
-
-	/*
-	 * Check for this if flagged, Req based dm needs to perform
-	 * post processing, hence dont end bios or request.DM
-	 * layer takes care.
-	 */
-	if (bio_flagged(req->bio, BIO_DONTFREE))
-		return false;
-
 	while (req->bio) {
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);
@@ -2819,11 +2789,6 @@ bool blk_update_request(struct request *req, blk_status_t error,
 	/* update sector only for requests with clear definition of sector */
 	if (!blk_rq_is_passthrough(req))
 		req->__sector += total_bytes >> 9;
-#ifdef CONFIG_PFK
-		if (req->__dun)
-			req->__dun += total_bytes >> 12;
-#endif
-	}
 
 	/* mixed attributes always follow the first bio */
 	if (req->rq_flags & RQF_MIXED_MERGE) {
@@ -3186,9 +3151,6 @@ static void __blk_rq_prep_clone(struct request *dst, struct request *src)
 {
 	dst->cpu = src->cpu;
 	dst->__sector = blk_rq_pos(src);
-#ifdef CONFIG_PFK
-	dst->__dun = blk_rq_dun(src);
-#endif
 	dst->__data_len = blk_rq_bytes(src);
 	if (src->rq_flags & RQF_SPECIAL_PAYLOAD) {
 		dst->rq_flags |= RQF_SPECIAL_PAYLOAD;
@@ -3688,52 +3650,3 @@ int __init blk_dev_init(void)
 
 	return 0;
 }
-
-/*
- * Blk IO latency support. We want this to be as cheap as possible, so doing
- * this lockless (and avoiding atomics), a few off by a few errors in this
- * code is not harmful, and we don't want to do anything that is
- * perf-impactful.
- * TODO : If necessary, we can make the histograms per-cpu and aggregate
- * them when printing them out.
- */
-ssize_t
-blk_latency_hist_show(char* name, struct io_latency_state *s, char *buf,
-		int buf_size)
-{
-	int i;
-	int bytes_written = 0;
-	u_int64_t num_elem, elem;
-	int pct;
-	u_int64_t average;
-
-       num_elem = s->latency_elems;
-       if (num_elem > 0) {
-	       average = div64_u64(s->latency_sum, s->latency_elems);
-	       bytes_written += scnprintf(buf + bytes_written,
-			       buf_size - bytes_written,
-			       "IO svc_time %s Latency Histogram (n = %llu,"
-			       " average = %llu):\n", name, num_elem, average);
-	       for (i = 0;
-		    i < ARRAY_SIZE(latency_x_axis_us);
-		    i++) {
-		       elem = s->latency_y_axis[i];
-		       pct = div64_u64(elem * 100, num_elem);
-		       bytes_written += scnprintf(buf + bytes_written,
-				       PAGE_SIZE - bytes_written,
-				       "\t< %6lluus%15llu%15d%%\n",
-				       latency_x_axis_us[i],
-				       elem, pct);
-	       }
-	       /* Last element in y-axis table is overflow */
-	       elem = s->latency_y_axis[i];
-	       pct = div64_u64(elem * 100, num_elem);
-	       bytes_written += scnprintf(buf + bytes_written,
-			       PAGE_SIZE - bytes_written,
-			       "\t>=%6lluus%15llu%15d%%\n",
-			       latency_x_axis_us[i - 1], elem, pct);
-	}
-
-	return bytes_written;
-}
-EXPORT_SYMBOL(blk_latency_hist_show);

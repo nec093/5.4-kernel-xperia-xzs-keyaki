@@ -1088,9 +1088,18 @@ static int msm_pcm_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static int msm_pcm_copy_user(struct snd_pcm_substream *substream, int channel,
+			unsigned long pos, void __user *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+
+	return msm_pcm_copy(substream, channel, bytes_to_frames(runtime, pos), buf,
+		  bytes_to_frames(runtime, bytes));
+}
+
 static const struct snd_pcm_ops msm_pcm_ops = {
 	.open           = msm_pcm_open,
-	.copy		= msm_pcm_copy,
+	.copy_user		= msm_pcm_copy_user,
 	.hw_params	= msm_pcm_hw_params,
 	.close          = msm_pcm_close,
 	.ioctl          = snd_pcm_lib_ioctl,

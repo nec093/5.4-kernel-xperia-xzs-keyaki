@@ -16,11 +16,6 @@ struct fib_kuid_range {
 	kuid_t end;
 };
 
-struct fib_kuid_range {
-	kuid_t start;
-	kuid_t end;
-};
-
 struct fib_rule {
 	struct list_head	list;
 	int			iifindex;

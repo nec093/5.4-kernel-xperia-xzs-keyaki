@@ -1958,7 +1958,6 @@ struct security_hook_heads {
 	struct list_head bpf_prog_alloc_security;
 	struct list_head bpf_prog_free_security;
 #endif /* CONFIG_BPF_SYSCALL */
-};
 } __randomize_layout;
 
 /*

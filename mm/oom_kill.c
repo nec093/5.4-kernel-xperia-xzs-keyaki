@@ -40,7 +40,6 @@
 #include <linux/ratelimit.h>
 #include <linux/kthread.h>
 #include <linux/init.h>
-#include <linux/show_mem_notifier.h>
 #include <linux/mmu_notifier.h>
 
 #include <asm/tlb.h>
@@ -207,6 +206,13 @@ unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,
 		atomic_long_read(&p->mm->nr_ptes) + mm_nr_pmds(p->mm);
 	task_unlock(p);
 
+	/*
+	 * Root processes get 3% bonus, just like the __vm_enough_memory()
+	 * implementation used by LSMs.
+	 */
+	if (has_capability_noaudit(p, CAP_SYS_ADMIN))
+		points -= (points * 3) / 100;
+
 	/* Normalize to oom_score_adj units */
 	adj *= totalpages / 1000;
 	points += adj;
@@ -242,7 +248,7 @@ static enum oom_constraint constrained_alloc(struct oom_control *oc)
 	}
 
 	/* Default to all available memory */
-	oc->totalpages = totalram_pages() + total_swap_pages;
+	oc->totalpages = totalram_pages + total_swap_pages;
 
 	if (!IS_ENABLED(CONFIG_NUMA))
 		return CONSTRAINT_NONE;
@@ -368,7 +374,7 @@ static void select_bad_process(struct oom_control *oc)
  * State information includes task's pid, uid, tgid, vm size, rss, nr_ptes,
  * swapents, oom_score_adj value, and name.
  */
-void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
+static void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 {
 	struct task_struct *p;
 	struct task_struct *task;
@@ -418,10 +424,8 @@ static void dump_header(struct oom_control *oc, struct task_struct *p)
 	dump_stack();
 	if (oc->memcg)
 		mem_cgroup_print_oom_info(oc->memcg, p);
-	else {
+	else
 		show_mem(SHOW_MEM_FILTER_NODES, oc->nodemask);
-		show_mem_call_notifiers();
-	}
 	if (sysctl_oom_dump_tasks)
 		dump_tasks(oc->memcg, oc->nodemask);
 }
@@ -621,7 +625,7 @@ static int oom_reaper(void *unused)
 	return 0;
 }
 
-void wake_oom_reaper(struct task_struct *tsk)
+static void wake_oom_reaper(struct task_struct *tsk)
 {
 	if (!oom_reaper_th)
 		return;
@@ -629,10 +633,10 @@ void wake_oom_reaper(struct task_struct *tsk)
 	/* mm is already queued? */
 	if (test_and_set_bit(MMF_OOM_REAP_QUEUED, &tsk->signal->oom_mm->flags))
 		return;
-	}
 
 	get_task_struct(tsk);
 
+	spin_lock(&oom_reaper_lock);
 	tsk->oom_reaper_list = oom_reaper_list;
 	oom_reaper_list = tsk;
 	spin_unlock(&oom_reaper_lock);

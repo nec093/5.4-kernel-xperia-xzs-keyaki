@@ -20,10 +20,7 @@
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 
-struct compat_sigcontext {
-	/* We always set these two fields to 0 */
-	compat_ulong_t			trap_no;
-	compat_ulong_t			error_code;
+#define AARCH32_KERN_SIGRET_CODE_OFFSET	0x500
 
 int compat_setup_frame(int usig, struct ksignal *ksig, sigset_t *set,
 		       struct pt_regs *regs);
