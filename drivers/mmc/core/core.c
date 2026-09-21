@@ -4992,13 +4992,10 @@ static void __exit mmc_exit(void)
 static ssize_t
 latency_hist_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct mmc_host *host = cls_dev_to_mmc_host(dev);
 	size_t written_bytes;
 
-	written_bytes = blk_latency_hist_show("Read", &host->io_lat_read,
-			buf, PAGE_SIZE);
-	written_bytes += blk_latency_hist_show("Write", &host->io_lat_write,
-			buf + written_bytes, PAGE_SIZE - written_bytes);
+	/* the CAF block latency histogram is not carried in this port */
+	written_bytes = scnprintf(buf, PAGE_SIZE, "unsupported\n");
 
 	return written_bytes;
 }
