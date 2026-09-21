@@ -94,7 +94,7 @@ static inline void __sdfat_submit_bio_write2(int flags, struct bio *bio)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
 static void  mpage_write_end_io(struct bio *bio)
 {
-	__mpage_write_end_io(bio, bio->bi_error);
+	__mpage_write_end_io(bio, blk_status_to_errno(bio->bi_status));
 }
 #else /* LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0) */
 static void mpage_write_end_io(struct bio *bio, int err)
@@ -277,7 +277,7 @@ mpage_alloc(struct block_device *bdev,
 	}
 
 	if (bio) {
-		bio->bi_bdev = bdev;
+		bio_set_dev(bio, bdev);
 		__sdfat_set_bio_sector(bio, first_sector);
 	}
 	return bio;
@@ -361,7 +361,7 @@ static int sdfat_mpage_writepage(struct page *page,
 
 				if (buffer_new(bh)) {
 					clear_buffer_new(bh);
-					unmap_underlying_metadata(bh->b_bdev, bh->b_blocknr);
+					clean_bdev_bh_alias(bh);
 				}
 			}
 
@@ -411,8 +411,7 @@ static int sdfat_mpage_writepage(struct page *page,
 			goto confused;
 
 		if (buffer_new(&map_bh))
-			unmap_underlying_metadata(map_bh.b_bdev,
-					map_bh.b_blocknr);
+			clean_bdev_bh_alias(&map_bh);
 		if (buffer_boundary(&map_bh)) {
 			boundary_block = map_bh.b_blocknr;
 			boundary_bdev = map_bh.b_bdev;

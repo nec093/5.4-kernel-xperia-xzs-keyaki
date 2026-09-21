@@ -219,7 +219,7 @@ static inline void inode_unlock(struct inode *inode)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
 static void sdfat_writepage_end_io(struct bio *bio)
 {
-	__sdfat_writepage_end_io(bio, bio->bi_error);
+	__sdfat_writepage_end_io(bio, blk_status_to_errno(bio->bi_status));
 }
 #else /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0) */
 static void sdfat_writepage_end_io(struct bio *bio, int err)
@@ -2927,7 +2927,6 @@ static const struct inode_operations sdfat_dir_inode_operations = {
 /*  File Operations                                                     */
 /*======================================================================*/
 static const struct inode_operations sdfat_symlink_inode_operations = {
-	.readlink    = generic_readlink,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
 	.get_link = sdfat_follow_link,
 #else /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0) */
@@ -3444,7 +3443,7 @@ static inline void sdfat_submit_fullpage_bio(struct block_device *bdev,
 	 */
 	bio = bio_alloc(GFP_NOIO, 1);
 
-	bio->bi_bdev = bdev;
+	bio_set_dev(bio, bdev);
 	bio->bi_vcnt = 1;
 	bio->bi_io_vec[0].bv_page = page;	/* Inline vec */
 	bio->bi_io_vec[0].bv_len = length;	/* PAGE_SIZE */
@@ -3535,7 +3534,7 @@ static int sdfat_writepage(struct page *page, struct writeback_control *wbc)
 
 			if (buffer_new(bh)) {
 				clear_buffer_new(bh);
-				unmap_underlying_metadata(bh->b_bdev, bh->b_blocknr);
+				clean_bdev_bh_alias(bh);
 			}
 		}
 

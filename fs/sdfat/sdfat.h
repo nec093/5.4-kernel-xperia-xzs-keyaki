@@ -29,6 +29,10 @@
 #include <linux/kobject.h>
 #include "api.h"
 
+#ifndef CURRENT_TIME_SEC
+#define CURRENT_TIME_SEC	((struct timespec) { get_seconds(), 0 })
+#endif
+
 #ifdef CONFIG_SDFAT_DFR
 #include "dfr.h"
 #endif
