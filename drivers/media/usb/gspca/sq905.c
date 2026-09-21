@@ -12,6 +12,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 /*
@@ -37,7 +41,8 @@
 #include <linux/slab.h>
 #include "gspca.h"
 
-MODULE_AUTHOR("Adam Baker <linux@baker-net.org.uk>, Theodore Kilgore <kilgota@auburn.edu>");
+MODULE_AUTHOR("Adam Baker <linux@baker-net.org.uk>, "
+		"Theodore Kilgore <kilgota@auburn.edu>");
 MODULE_DESCRIPTION("GSPCA/SQ905 USB Camera Driver");
 MODULE_LICENSE("GPL");
 
@@ -125,7 +130,7 @@ static int sq905_command(struct gspca_dev *gspca_dev, u16 index)
 	}
 
 	ret = usb_control_msg(gspca_dev->dev,
-			      usb_rcvctrlpipe(gspca_dev->dev, 0),
+			      usb_sndctrlpipe(gspca_dev->dev, 0),
 			      USB_REQ_SYNCH_FRAME,                /* request */
 			      USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 			      SQ905_PING, 0, gspca_dev->usb_buf, 1,
@@ -167,7 +172,7 @@ static int
 sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size, int need_lock)
 {
 	int ret;
-	int act_len = 0;
+	int act_len;
 
 	gspca_dev->usb_buf[0] = '\0';
 	if (need_lock)

@@ -13,6 +13,7 @@
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
+#include <linux/sched/clock.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/fs.h>

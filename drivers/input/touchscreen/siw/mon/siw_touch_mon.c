@@ -715,7 +715,7 @@ static void __siw_mon_exit_term(struct siw_mon_term *mterm)
 	if (mterm->nreaders) {
 		mon_pr_err("Outstanding opens (%d), leaking...\n",
 		    	mterm->nreaders);
-		atomic_set(&mterm->ref.refcount, 2);	/* Force leak */
+		refcount_set(&mterm->ref.refcount, 2);	/* Force leak */
 	}
 
 	siw_mon_dissolve(mterm);

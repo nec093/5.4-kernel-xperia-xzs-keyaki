@@ -20,6 +20,10 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  *  Stripped of 2.4 stuff ready for main kernel submit by
  *		Alan Cox <alan@lxorguk.ukuu.org.uk>
  ****************************************************************************/
@@ -60,7 +64,7 @@ static int submit_urbs(struct camera_data *cam);
 static int set_alternate(struct camera_data *cam, unsigned int alt);
 static int configure_transfer_mode(struct camera_data *cam, unsigned int alt);
 
-static const struct usb_device_id cpia2_id_table[] = {
+static struct usb_device_id cpia2_id_table[] = {
 	{USB_DEVICE(0x0553, 0x0100)},
 	{USB_DEVICE(0x0553, 0x0140)},
 	{USB_DEVICE(0x0553, 0x0151)},  /* STV0676 */
@@ -547,9 +551,11 @@ static int write_packet(struct usb_device *udev,
 	if (!registers || size <= 0)
 		return -EINVAL;
 
-	buf = kmemdup(registers, size, GFP_KERNEL);
+	buf = kmalloc(size, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
+
+	memcpy(buf, registers, size);
 
 	ret = usb_control_msg(udev,
 			       usb_sndctrlpipe(udev, 0),
@@ -559,7 +565,7 @@ static int write_packet(struct usb_device *udev,
 			       0,	/* index */
 			       buf,	/* buffer */
 			       size,
-			       1000);
+			       HZ);
 
 	kfree(buf);
 	return ret;
@@ -591,7 +597,7 @@ static int read_packet(struct usb_device *udev,
 			       0,	/* index */
 			       buf,	/* buffer */
 			       size,
-			       1000);
+			       HZ);
 
 	if (ret >= 0)
 		memcpy(registers, buf, size);
@@ -757,7 +763,9 @@ int cpia2_usb_stream_start(struct camera_data *cam, unsigned int alternate)
 		cam->params.camera_state.stream_mode = old_alt;
 		ret2 = set_alternate(cam, USBIF_CMDONLY);
 		if (ret2 < 0) {
-			ERR("cpia2_usb_change_streaming_alternate(%d) =%d has already failed. Then tried to call set_alternate(USBIF_CMDONLY) = %d.\n",
+			ERR("cpia2_usb_change_streaming_alternate(%d) =%d has already "
+			    "failed. Then tried to call "
+			    "set_alternate(USBIF_CMDONLY) = %d.\n",
 			    alternate, ret, ret2);
 		}
 	} else {
@@ -852,13 +860,15 @@ static int cpia2_usb_probe(struct usb_interface *intf,
 	ret = set_alternate(cam, USBIF_CMDONLY);
 	if (ret < 0) {
 		ERR("%s: usb_set_interface error (ret = %d)\n", __func__, ret);
-		goto alt_err;
+		kfree(cam);
+		return ret;
 	}
 
 
 	if((ret = cpia2_init_camera(cam)) < 0) {
 		ERR("%s: failed to initialize cpia2 camera (ret = %d)\n", __func__, ret);
-		goto alt_err;
+		kfree(cam);
+		return ret;
 	}
 	LOG("  CPiA Version: %d.%02d (%d.%d)\n",
 	       cam->params.version.firmware_revision_hi,
@@ -878,14 +888,11 @@ static int cpia2_usb_probe(struct usb_interface *intf,
 	ret = cpia2_register_camera(cam);
 	if (ret < 0) {
 		ERR("%s: Failed to register cpia2 camera (ret = %d)\n", __func__, ret);
-		goto alt_err;
+		kfree(cam);
+		return ret;
 	}
 
 	return 0;
-
-alt_err:
-	cpia2_deinit_camera_struct(cam, intf);
-	return ret;
 }
 
 /******************************************************************************

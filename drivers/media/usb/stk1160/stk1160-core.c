@@ -20,7 +20,8 @@
  *
  * TODO:
  *
- * 1. Support stream at lower speed: lower frame rate or lower frame size.
+ * 1. (Try to) detect if we must register ac97 mixer
+ * 2. Support stream at lower speed: lower frame rate or lower frame size.
  *
  */
 
@@ -47,7 +48,7 @@ MODULE_AUTHOR("Ezequiel Garcia");
 MODULE_DESCRIPTION("STK1160 driver");
 
 /* Devices supported by this driver */
-static const struct usb_device_id stk1160_id_table[] = {
+static struct usb_device_id stk1160_id_table[] = {
 	{ USB_DEVICE(0x05e1, 0x0408) },
 	{ }
 };
@@ -75,7 +76,7 @@ int stk1160_read_reg(struct stk1160 *dev, u16 reg, u8 *value)
 		return -ENOMEM;
 	ret = usb_control_msg(dev->udev, pipe, 0x00,
 			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0x00, reg, buf, sizeof(u8), 1000);
+			0x00, reg, buf, sizeof(u8), HZ);
 	if (ret < 0) {
 		stk1160_err("read failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -95,7 +96,7 @@ int stk1160_write_reg(struct stk1160 *dev, u16 reg, u16 value)
 
 	ret =  usb_control_msg(dev->udev, pipe, 0x01,
 			USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			value, reg, NULL, 0, 1000);
+			value, reg, NULL, 0, HZ);
 	if (ret < 0) {
 		stk1160_err("write failed on reg 0x%x (%d)\n",
 			reg, ret);
@@ -372,7 +373,7 @@ static int stk1160_probe(struct usb_interface *interface,
 	/* select default input */
 	stk1160_select_input(dev);
 
-	stk1160_ac97_setup(dev);
+	stk1160_ac97_register(dev);
 
 	rc = stk1160_video_register(dev);
 	if (rc < 0)
@@ -410,7 +411,10 @@ static void stk1160_disconnect(struct usb_interface *interface)
 	/* Here is the only place where isoc get released */
 	stk1160_uninit_isoc(dev);
 
-	stk1160_clear_queue(dev, VB2_BUF_STATE_ERROR);
+	/* ac97 unregister needs to be done before usb_device is cleared */
+	stk1160_ac97_unregister(dev);
+
+	stk1160_clear_queue(dev);
 
 	video_unregister_device(&dev->vdev);
 	v4l2_device_disconnect(&dev->v4l2_dev);

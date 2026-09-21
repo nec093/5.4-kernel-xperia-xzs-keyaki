@@ -380,9 +380,28 @@ static struct device_attribute subsys_attrs[] = {
 	__ATTR_NULL,
 };
 
+static struct attribute *subsys_attr_ptrs[] = {
+	&subsys_attrs[0].attr,
+	&subsys_attrs[1].attr,
+	&subsys_attrs[2].attr,
+	&subsys_attrs[3].attr,
+	&subsys_attrs[4].attr,
+	&subsys_attrs[5].attr,
+	NULL,
+};
+
+static const struct attribute_group subsys_attr_group = {
+	.attrs = subsys_attr_ptrs,
+};
+
+static const struct attribute_group *subsys_attr_groups[] = {
+	&subsys_attr_group,
+	NULL,
+};
+
 struct bus_type subsys_bus_type = {
 	.name		= "msm_subsys",
-	.dev_attrs	= subsys_attrs,
+	.dev_groups	= subsys_attr_groups,
 };
 EXPORT_SYMBOL(subsys_bus_type);
 

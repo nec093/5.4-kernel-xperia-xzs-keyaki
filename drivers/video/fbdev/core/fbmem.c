@@ -1362,6 +1362,7 @@ static int fb_get_fscreeninfo(struct fb_info *info, unsigned int cmd,
 {
 	struct fb_fix_screeninfo fix;
 	struct fb_fix_screeninfo32 __user *fix32;
+	mm_segment_t old_fs;
 	int err;
 
 	fix32 = compat_ptr(arg);

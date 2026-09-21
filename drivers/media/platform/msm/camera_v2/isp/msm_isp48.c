@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/sched/clock.h>
 #include <linux/module.h>
 #include <linux/ratelimit.h>
 #include <linux/clk/qcom.h>

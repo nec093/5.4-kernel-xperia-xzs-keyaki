@@ -739,7 +739,7 @@ static int adv7511_s_power(struct v4l2_subdev *sd, int on)
 #if IS_ENABLED(CONFIG_VIDEO_ADV7511_CEC)
 static int adv7511_cec_adap_enable(struct cec_adapter *adap, bool enable)
 {
-	struct adv7511_state *state = cec_get_drvdata(adap);
+	struct adv7511_state *state = adap->priv;
 	struct v4l2_subdev *sd = &state->sd;
 
 	if (state->i2c_cec == NULL)
@@ -774,7 +774,7 @@ static int adv7511_cec_adap_enable(struct cec_adapter *adap, bool enable)
 
 static int adv7511_cec_adap_log_addr(struct cec_adapter *adap, u8 addr)
 {
-	struct adv7511_state *state = cec_get_drvdata(adap);
+	struct adv7511_state *state = adap->priv;
 	struct v4l2_subdev *sd = &state->sd;
 	unsigned int i, free_idx = ADV7511_MAX_ADDRS;
 
@@ -829,7 +829,7 @@ static int adv7511_cec_adap_log_addr(struct cec_adapter *adap, u8 addr)
 static int adv7511_cec_adap_transmit(struct cec_adapter *adap, u8 attempts,
 				     u32 signal_free_time, struct cec_msg *msg)
 {
-	struct adv7511_state *state = cec_get_drvdata(adap);
+	struct adv7511_state *state = adap->priv;
 	struct v4l2_subdev *sd = &state->sd;
 	u8 len = msg->len;
 	unsigned int i;
@@ -1737,10 +1737,9 @@ static bool adv7511_check_edid_status(struct v4l2_subdev *sd)
 static int adv7511_registered(struct v4l2_subdev *sd)
 {
 	struct adv7511_state *state = get_adv7511_state(sd);
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	int err;
 
-	err = cec_register_adapter(state->cec_adap, &client->dev);
+	err = cec_register_adapter(state->cec_adap);
 	if (err)
 		cec_delete_adapter(state->cec_adap);
 	return err;
@@ -1932,8 +1931,9 @@ static int adv7511_probe(struct i2c_client *client, const struct i2c_device_id *
 
 #if IS_ENABLED(CONFIG_VIDEO_ADV7511_CEC)
 	state->cec_adap = cec_allocate_adapter(&adv7511_cec_adap_ops,
-		state, dev_name(&client->dev), CEC_CAP_DEFAULTS,
-		ADV7511_MAX_ADDRS);
+		state, dev_name(&client->dev), CEC_CAP_TRANSMIT |
+		CEC_CAP_LOG_ADDRS | CEC_CAP_PASSTHROUGH | CEC_CAP_RC,
+		ADV7511_MAX_ADDRS, &client->dev);
 	err = PTR_ERR_OR_ZERO(state->cec_adap);
 	if (err) {
 		destroy_workqueue(state->work_queue);
@@ -1976,7 +1976,7 @@ static int adv7511_remove(struct i2c_client *client)
 
 	adv7511_set_isr(sd, false);
 	adv7511_init_setup(sd);
-	cancel_delayed_work_sync(&state->edid_handler);
+	cancel_delayed_work(&state->edid_handler);
 	i2c_unregister_device(state->i2c_edid);
 	if (state->i2c_cec)
 		i2c_unregister_device(state->i2c_cec);
@@ -1990,7 +1990,7 @@ static int adv7511_remove(struct i2c_client *client)
 
 /* ----------------------------------------------------------------------- */
 
-static const struct i2c_device_id adv7511_id[] = {
+static struct i2c_device_id adv7511_id[] = {
 	{ "adv7511", 0 },
 	{ }
 };

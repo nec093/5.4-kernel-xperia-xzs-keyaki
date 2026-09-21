@@ -11,6 +11,10 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include "saa7134.h"
@@ -205,7 +209,7 @@ static const struct v4l2_ioctl_ops ts_ioctl_ops = {
 
 /* ----------------------------------------------------------- */
 
-static const struct video_device saa7134_empress_template = {
+static struct video_device saa7134_empress_template = {
 	.name          = "saa7134-empress",
 	.fops          = &ts_fops,
 	.ioctl_ops     = &ts_ioctl_ops,
@@ -293,11 +297,8 @@ static int empress_init(struct saa7134_dev *dev)
 	q->lock = &dev->lock;
 	q->dev = &dev->pci->dev;
 	err = vb2_queue_init(q);
-	if (err) {
-		video_device_release(dev->empress_dev);
-		dev->empress_dev = NULL;
+	if (err)
 		return err;
-	}
 	dev->empress_dev->queue = q;
 
 	video_set_drvdata(dev->empress_dev, dev);

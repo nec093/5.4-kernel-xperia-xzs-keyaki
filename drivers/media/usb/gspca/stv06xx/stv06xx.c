@@ -14,6 +14,10 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
  * P/N 861037:      Sensor HDCS1000        ASIC STV0600
  * P/N 861050-0010: Sensor HDCS1000        ASIC STV0600
  * P/N 861050-0020: Sensor Photobit PB100  ASIC STV0600-1 - QuickCam Express
@@ -425,7 +429,8 @@ static void stv06xx_pkt_scan(struct gspca_dev *gspca_dev,
 		len -= 4;
 
 		if (len < chunk_len) {
-			PERR("URB packet length is smaller than the specified chunk length");
+			PERR("URB packet length is smaller"
+				" than the specified chunk length");
 			gspca_dev->last_packet_type = DISCARD_PACKET;
 			return;
 		}
@@ -467,7 +472,8 @@ frame_data:
 				sd->to_skip = gspca_dev->pixfmt.width * 4;
 
 			if (chunk_len)
-				PERR("Chunk length is non-zero on a SOF");
+				PERR("Chunk length is "
+					      "non-zero on a SOF");
 			break;
 
 		case 0x8002:
@@ -480,7 +486,8 @@ frame_data:
 					NULL, 0);
 
 			if (chunk_len)
-				PERR("Chunk length is non-zero on a EOF");
+				PERR("Chunk length is "
+					      "non-zero on a EOF");
 			break;
 
 		case 0x0005:
@@ -534,21 +541,12 @@ static int sd_int_pkt_scan(struct gspca_dev *gspca_dev,
 static int stv06xx_config(struct gspca_dev *gspca_dev,
 			  const struct usb_device_id *id);
 
-static void stv06xx_probe_error(struct gspca_dev *gspca_dev)
-{
-	struct sd *sd = (struct sd *)gspca_dev;
-
-	kfree(sd->sensor_priv);
-	sd->sensor_priv = NULL;
-}
-
 /* sub-driver description */
 static const struct sd_desc sd_desc = {
 	.name = MODULE_NAME,
 	.config = stv06xx_config,
 	.init = stv06xx_init,
 	.init_controls = stv06xx_init_controls,
-	.probe_error = stv06xx_probe_error,
 	.start = stv06xx_start,
 	.stopN = stv06xx_stopN,
 	.pkt_scan = stv06xx_pkt_scan,
@@ -601,12 +599,18 @@ static int stv06xx_config(struct gspca_dev *gspca_dev,
 
 /* -- module initialisation -- */
 static const struct usb_device_id device_table[] = {
-	{USB_DEVICE(0x046d, 0x0840), .driver_info = BRIDGE_STV600 }, 	/* QuickCam Express */
-	{USB_DEVICE(0x046d, 0x0850), .driver_info = BRIDGE_STV610 },	/* LEGO cam / QuickCam Web */
-	{USB_DEVICE(0x046d, 0x0870), .driver_info = BRIDGE_STV602 },	/* Dexxa WebCam USB */
-	{USB_DEVICE(0x046D, 0x08F0), .driver_info = BRIDGE_ST6422 },	/* QuickCam Messenger */
-	{USB_DEVICE(0x046D, 0x08F5), .driver_info = BRIDGE_ST6422 },	/* QuickCam Communicate */
-	{USB_DEVICE(0x046D, 0x08F6), .driver_info = BRIDGE_ST6422 },	/* QuickCam Messenger (new) */
+	/* QuickCam Express */
+	{USB_DEVICE(0x046d, 0x0840), .driver_info = BRIDGE_STV600 },
+	/* LEGO cam / QuickCam Web */
+	{USB_DEVICE(0x046d, 0x0850), .driver_info = BRIDGE_STV610 },
+	/* Dexxa WebCam USB */
+	{USB_DEVICE(0x046d, 0x0870), .driver_info = BRIDGE_STV602 },
+	/* QuickCam Messenger */
+	{USB_DEVICE(0x046D, 0x08F0), .driver_info = BRIDGE_ST6422 },
+	/* QuickCam Communicate */
+	{USB_DEVICE(0x046D, 0x08F5), .driver_info = BRIDGE_ST6422 },
+	/* QuickCam Messenger (new) */
+	{USB_DEVICE(0x046D, 0x08F6), .driver_info = BRIDGE_ST6422 },
 	{}
 };
 MODULE_DEVICE_TABLE(usb, device_table);

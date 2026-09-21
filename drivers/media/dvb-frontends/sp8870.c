@@ -293,9 +293,7 @@ static int sp8870_set_frontend_parameters(struct dvb_frontend *fe)
 	sp8870_writereg(state, 0xc05, reg0xc05);
 
 	// read status reg in order to clear pending irqs
-	err = sp8870_readreg(state, 0x200);
-	if (err < 0)
-		return err;
+	sp8870_readreg(state, 0x200);
 
 	// system controller start
 	sp8870_microcontroller_start(state);
@@ -553,7 +551,7 @@ static void sp8870_release(struct dvb_frontend* fe)
 	kfree(state);
 }
 
-static const struct dvb_frontend_ops sp8870_ops;
+static struct dvb_frontend_ops sp8870_ops;
 
 struct dvb_frontend* sp8870_attach(const struct sp8870_config* config,
 				   struct i2c_adapter* i2c)
@@ -582,7 +580,7 @@ error:
 	return NULL;
 }
 
-static const struct dvb_frontend_ops sp8870_ops = {
+static struct dvb_frontend_ops sp8870_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name			= "Spase SP8870 DVB-T",
@@ -619,4 +617,4 @@ MODULE_DESCRIPTION("Spase SP8870 DVB-T Demodulator driver");
 MODULE_AUTHOR("Juergen Peitz");
 MODULE_LICENSE("GPL");
 
-EXPORT_SYMBOL_GPL(sp8870_attach);
+EXPORT_SYMBOL(sp8870_attach);

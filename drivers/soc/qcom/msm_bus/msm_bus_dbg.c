@@ -14,6 +14,7 @@
 
 #define pr_fmt(fmt) "AXI: %s(): " fmt, __func__
 
+#include <linux/rtmutex.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/seq_file.h>

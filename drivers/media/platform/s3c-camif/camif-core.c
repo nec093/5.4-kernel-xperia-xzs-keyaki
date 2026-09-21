@@ -317,6 +317,7 @@ static int camif_media_dev_init(struct camif_dev *camif)
 		 ip_rev == S3C6410_CAMIF_IP_REV ? "6410" : "244X");
 	strlcpy(md->bus_info, "platform", sizeof(md->bus_info));
 	md->hw_revision = ip_rev;
+	md->driver_version = KERNEL_VERSION(1, 0, 0);
 
 	md->dev = camif->dev;
 
@@ -475,7 +476,7 @@ static int s3c_camif_probe(struct platform_device *pdev)
 
 	ret = camif_media_dev_init(camif);
 	if (ret < 0)
-		goto err_pm;
+		goto err_alloc;
 
 	ret = camif_register_sensor(camif);
 	if (ret < 0)
@@ -509,9 +510,10 @@ err_sens:
 	media_device_unregister(&camif->media_dev);
 	media_device_cleanup(&camif->media_dev);
 	camif_unregister_media_entities(camif);
-err_pm:
+err_alloc:
 	pm_runtime_put(dev);
 	pm_runtime_disable(dev);
+err_pm:
 	camif_clk_put(camif);
 err_clk:
 	s3c_camif_unregister_subdev(camif);

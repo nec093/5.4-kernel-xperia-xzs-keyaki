@@ -4096,7 +4096,7 @@ static long msm_cpp_subdev_fops_compat_ioctl(struct file *file,
 		status = compat_ptr(k32_frame_info.status);
 
 		if (copy_to_user(status, &rc,
-			sizeof(void *)))
+			sizeof(rc)))
 			pr_err("error cannot copy error\n");
 
 		if (copy_to_user((void __user *)kp_ioctl.ioctl_ptr,

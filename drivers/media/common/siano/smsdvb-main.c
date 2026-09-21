@@ -1044,7 +1044,7 @@ static void smsdvb_release(struct dvb_frontend *fe)
 	/* do nothing */
 }
 
-static const struct dvb_frontend_ops smsdvb_fe_ops = {
+static struct dvb_frontend_ops smsdvb_fe_ops = {
 	.info = {
 		.name			= "Siano Mobile Digital MDTV Receiver",
 		.frequency_min		= 44250000,
@@ -1180,18 +1180,11 @@ static int smsdvb_hotplug(struct smscore_device_t *coredev,
 	rc = dvb_create_media_graph(&client->adapter, true);
 	if (rc < 0) {
 		pr_err("dvb_create_media_graph failed %d\n", rc);
-		goto media_graph_error;
+		goto client_error;
 	}
 
 	pr_info("DVB interface registered.\n");
 	return 0;
-
-media_graph_error:
-	mutex_lock(&g_smsdvb_clientslock);
-	list_del(&client->entry);
-	mutex_unlock(&g_smsdvb_clientslock);
-
-	smsdvb_debugfs_release(client);
 
 client_error:
 	dvb_unregister_frontend(&client->frontend);

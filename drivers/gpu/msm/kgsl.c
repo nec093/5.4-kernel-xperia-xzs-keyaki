@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  *
  */
+#include <uapi/linux/sched/types.h>
 #include <linux/module.h>
 #include <linux/fb.h>
 #include <linux/file.h>
@@ -4109,8 +4110,9 @@ static void kgsl_gpumem_vm_open(struct vm_area_struct *vma)
 }
 
 static int
-kgsl_gpumem_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+kgsl_gpumem_vm_fault(struct vm_fault *vmf)
 {
+	struct vm_area_struct *vma = vmf->vma;
 	struct kgsl_mem_entry *entry = vma->vm_private_data;
 	int ret;
 

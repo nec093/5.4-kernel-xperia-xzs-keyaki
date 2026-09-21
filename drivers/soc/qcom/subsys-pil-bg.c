@@ -351,7 +351,7 @@ static int bg_auth_metadata(struct pil_desc *pil,
 
 	/* Make sure there are no mappings in PKMAP and fixmap */
 	kmap_flush_unused();
-	kmap_atomic_flush_unused();
+	kmap_flush_unused();
 
 	memcpy(mdata_buf, metadata, size);
 

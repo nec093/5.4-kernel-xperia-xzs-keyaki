@@ -10,6 +10,9 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/sched/debug.h>
+#include <uapi/linux/sched/types.h>
+#include <linux/sched/clock.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/io.h>
@@ -32,6 +35,8 @@
 #include <soc/qcom/minidump.h>
 #include <soc/qcom/watchdog.h>
 #include <linux/dma-mapping.h>
+
+extern void touch_softlockup_watchdog(void);
 
 #define MODULE_NAME "msm_watchdog"
 #define WDT0_ACCSCSSNBARK_INT 0

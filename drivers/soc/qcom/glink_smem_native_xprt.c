@@ -9,6 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+#include <uapi/linux/sched/types.h>
 #include <linux/debugfs.h>
 #include <linux/err.h>
 #include <linux/fs.h>

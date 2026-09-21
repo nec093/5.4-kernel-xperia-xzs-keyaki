@@ -89,36 +89,9 @@ int uvc_query_ctrl(struct uvc_device *dev, __u8 query, __u8 unit,
 static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
 	struct uvc_streaming_control *ctrl)
 {
-	static const struct usb_device_id elgato_cam_link_4k = {
-		USB_DEVICE(0x0fd9, 0x0066)
-	};
 	struct uvc_format *format = NULL;
 	struct uvc_frame *frame = NULL;
 	unsigned int i;
-
-	/*
-	 * The response of the Elgato Cam Link 4K is incorrect: The second byte
-	 * contains bFormatIndex (instead of being the second byte of bmHint).
-	 * The first byte is always zero. The third byte is always 1.
-	 *
-	 * The UVC 1.5 class specification defines the first five bits in the
-	 * bmHint bitfield. The remaining bits are reserved and should be zero.
-	 * Therefore a valid bmHint will be less than 32.
-	 *
-	 * Latest Elgato Cam Link 4K firmware as of 2021-03-23 needs this fix.
-	 * MCU: 20.02.19, FPGA: 67
-	 */
-	if (usb_match_one_id(stream->dev->intf, &elgato_cam_link_4k) &&
-	    ctrl->bmHint > 255) {
-		u8 corrected_format_index = ctrl->bmHint >> 8;
-
-		/* uvc_dbg(stream->dev, VIDEO,
-			"Correct USB video probe response from {bmHint: 0x%04x, bFormatIndex: %u} to {bmHint: 0x%04x, bFormatIndex: %u}\n",
-			ctrl->bmHint, ctrl->bFormatIndex,
-			1, corrected_format_index); */
-		ctrl->bmHint = 1;
-		ctrl->bFormatIndex = corrected_format_index;
-	}
 
 	for (i = 0; i < stream->nformats; ++i) {
 		if (stream->format[i].index == ctrl->bFormatIndex) {
@@ -766,9 +739,9 @@ static void uvc_video_stats_decode(struct uvc_streaming *stream,
 	unsigned int header_size;
 	bool has_pts = false;
 	bool has_scr = false;
-	u16 scr_sof;
-	u32 scr_stc;
-	u32 pts;
+	u16 uninitialized_var(scr_sof);
+	u32 uninitialized_var(scr_stc);
+	u32 uninitialized_var(pts);
 
 	if (stream->stats.stream.nb_frames == 0 &&
 	    stream->stats.frame.nb_packets == 0)
@@ -865,7 +838,7 @@ static void uvc_video_stats_decode(struct uvc_streaming *stream,
 
 	/* Update the packets counters. */
 	stream->stats.frame.nb_packets++;
-	if (len <= header_size)
+	if (len > header_size)
 		stream->stats.frame.nb_empty++;
 
 	if (data[1] & UVC_STREAM_ERR)
@@ -915,8 +888,14 @@ size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 	struct timespec ts;
 	size_t count = 0;
 
-	ts = timespec_sub(stream->stats.stream.stop_ts,
-			  stream->stats.stream.start_ts);
+	ts.tv_sec = stream->stats.stream.stop_ts.tv_sec
+		  - stream->stats.stream.start_ts.tv_sec;
+	ts.tv_nsec = stream->stats.stream.stop_ts.tv_nsec
+		   - stream->stats.stream.start_ts.tv_nsec;
+	if (ts.tv_nsec < 0) {
+		ts.tv_sec--;
+		ts.tv_nsec += 1000000000;
+	}
 
 	/* Compute the SCR.SOF frequency estimate. At the nominal 1kHz SOF
 	 * frequency this will not overflow before more than 1h.
@@ -1303,7 +1282,8 @@ static void uvc_video_decode_bulk(struct urb *urb, struct uvc_streaming *stream,
 			uvc_video_decode_end(stream, buf, stream->bulk.header,
 				stream->bulk.payload_size);
 			if (buf->state == UVC_BUF_STATE_READY)
-				uvc_queue_next_buffer(&stream->queue, buf);
+				buf = uvc_queue_next_buffer(&stream->queue,
+							    buf);
 		}
 
 		stream->bulk.header_size = 0;
@@ -1370,11 +1350,11 @@ static void uvc_video_complete(struct urb *urb)
 	default:
 		uvc_printk(KERN_WARNING, "Non-zero status (%d) in video "
 			"completion handler.\n", urb->status);
-		/* fall through */
+
 	case -ENOENT:		/* usb_kill_urb() called. */
 		if (stream->frozen)
 			return;
-		/* fall through */
+
 	case -ECONNRESET:	/* usb_unlink_urb() called. */
 	case -ESHUTDOWN:	/* The endpoint is being disabled. */
 		uvc_queue_cancel(queue, urb->status == -ESHUTDOWN);
@@ -1507,7 +1487,6 @@ static unsigned int uvc_endpoint_max_bpi(struct usb_device *dev,
 					 struct usb_host_endpoint *ep)
 {
 	u16 psize;
-	u16 mult;
 
 	switch (dev->speed) {
 	case USB_SPEED_SUPER:
@@ -1515,8 +1494,7 @@ static unsigned int uvc_endpoint_max_bpi(struct usb_device *dev,
 		return le16_to_cpu(ep->ss_ep_comp.wBytesPerInterval);
 	case USB_SPEED_HIGH:
 		psize = usb_endpoint_maxp(&ep->desc);
-		mult = usb_endpoint_maxp_mult(&ep->desc);
-		return (psize & 0x07ff) * mult;
+		return (psize & 0x07ff) * (1 + ((psize >> 11) & 3));
 	case USB_SPEED_WIRELESS:
 		psize = usb_endpoint_maxp(&ep->desc);
 		return psize;
@@ -1593,7 +1571,7 @@ static int uvc_init_video_bulk(struct uvc_streaming *stream,
 	u16 psize;
 	u32 size;
 
-	psize = usb_endpoint_maxp(&ep->desc);
+	psize = usb_endpoint_maxp(&ep->desc) & 0x7ff;
 	size = stream->ctrl.dwMaxPayloadTransferSize;
 	stream->bulk.max_payload_size = size;
 
@@ -1656,7 +1634,7 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		struct usb_host_endpoint *best_ep = NULL;
 		unsigned int best_psize = UINT_MAX;
 		unsigned int bandwidth;
-		unsigned int altsetting;
+		unsigned int uninitialized_var(altsetting);
 		int intfnum = stream->intfnum;
 
 		/* Isochronous endpoint, select the alternate setting. */
@@ -1709,10 +1687,6 @@ static int uvc_init_video(struct uvc_streaming *stream, gfp_t gfp_flags)
 		ep = uvc_find_endpoint(&intf->altsetting[0],
 				stream->header.bEndpointAddress);
 		if (ep == NULL)
-			return -EIO;
-
-		/* Reject broken descriptors. */
-		if (usb_endpoint_maxp(&ep->desc) == 0)
 			return -EIO;
 
 		ret = uvc_init_video_bulk(stream, ep, gfp_flags);

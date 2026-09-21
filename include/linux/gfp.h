@@ -275,6 +275,8 @@ struct vm_area_struct;
  *   in page fault path, while the non-light is used by khugepaged.
  */
 #define GFP_ATOMIC	(__GFP_HIGH|__GFP_ATOMIC|__GFP_KSWAPD_RECLAIM)
+/* Removed from mainline in 4.13; still used by CAF vendor code */
+#define GFP_TEMPORARY	(__GFP_RECLAIM | __GFP_IO | __GFP_FS | __GFP_RECLAIMABLE)
 #define GFP_KERNEL	(__GFP_RECLAIM | __GFP_IO | __GFP_FS)
 #define GFP_KERNEL_ACCOUNT (GFP_KERNEL | __GFP_ACCOUNT)
 #define GFP_NOWAIT	(__GFP_KSWAPD_RECLAIM)

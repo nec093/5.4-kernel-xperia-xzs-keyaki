@@ -66,6 +66,8 @@ enum migratetype {
 
 /* In mm/page_alloc.c; keep in sync also with show_migration_types() there */
 extern char * const migratetype_names[MIGRATE_TYPES];
+/* Fallback migratetype list for @mtype, terminated by MIGRATE_TYPES (used by the CAF lowmemorykiller) */
+extern int *get_migratetype_fallbacks(int mtype);
 
 #ifdef CONFIG_CMA
 #  define is_migrate_cma(migratetype) unlikely((migratetype) == MIGRATE_CMA)

@@ -14,6 +14,7 @@
 #ifndef __WCD934X_DSP_CNTL_H__
 #define __WCD934X_DSP_CNTL_H__
 
+#include <linux/miscdevice.h>
 #include <sound/soc.h>
 #include <sound/wcd-dsp-mgr.h>
 

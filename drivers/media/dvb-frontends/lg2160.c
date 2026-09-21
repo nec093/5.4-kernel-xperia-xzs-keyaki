@@ -13,6 +13,10 @@
  *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *    GNU General Public License for more details.
  *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *
  */
 
 #include <linux/jiffies.h>
@@ -1345,7 +1349,7 @@ static void lg216x_release(struct dvb_frontend *fe)
 	kfree(state);
 }
 
-static const struct dvb_frontend_ops lg2160_ops = {
+static struct dvb_frontend_ops lg2160_ops = {
 	.delsys = { SYS_ATSCMH },
 	.info = {
 		.name = "LG Electronics LG2160 ATSC/MH Frontend",
@@ -1371,7 +1375,7 @@ static const struct dvb_frontend_ops lg2160_ops = {
 	.release              = lg216x_release,
 };
 
-static const struct dvb_frontend_ops lg2161_ops = {
+static struct dvb_frontend_ops lg2161_ops = {
 	.delsys = { SYS_ATSCMH },
 	.info = {
 		.name = "LG Electronics LG2161 ATSC/MH Frontend",
@@ -1436,7 +1440,7 @@ struct dvb_frontend *lg2160_attach(const struct lg2160_config *config,
 
 	return &state->frontend;
 }
-EXPORT_SYMBOL_GPL(lg2160_attach);
+EXPORT_SYMBOL(lg2160_attach);
 
 MODULE_DESCRIPTION("LG Electronics LG216x ATSC/MH Demodulator Driver");
 MODULE_AUTHOR("Michael Krufky <mkrufky@linuxtv.org>");

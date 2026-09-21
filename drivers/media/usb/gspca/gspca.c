@@ -15,6 +15,10 @@
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
  * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
  * for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -197,7 +201,8 @@ static int alloc_and_submit_int_urb(struct gspca_dev *gspca_dev,
 
 	buffer_len = le16_to_cpu(ep->wMaxPacketSize);
 	interval = ep->bInterval;
-	PDEBUG(D_CONF, "found int in endpoint: 0x%x, buffer_len=%u, interval=%u",
+	PDEBUG(D_CONF, "found int in endpoint: 0x%x, "
+		"buffer_len=%u, interval=%u",
 		ep->bEndpointAddress, buffer_len, interval);
 
 	dev = gspca_dev->dev;
@@ -1964,7 +1969,7 @@ out:
 	return ret;
 }
 
-static const struct v4l2_file_operations dev_fops = {
+static struct v4l2_file_operations dev_fops = {
 	.owner = THIS_MODULE,
 	.open = dev_open,
 	.release = dev_close,
@@ -2140,9 +2145,6 @@ out:
 		input_unregister_device(gspca_dev->input_dev);
 #endif
 	v4l2_ctrl_handler_free(gspca_dev->vdev.ctrl_handler);
-	v4l2_device_unregister(&gspca_dev->v4l2_dev);
-	if (sd_desc->probe_error)
-		sd_desc->probe_error(gspca_dev);
 	kfree(gspca_dev->usb_buf);
 	kfree(gspca_dev);
 	return ret;

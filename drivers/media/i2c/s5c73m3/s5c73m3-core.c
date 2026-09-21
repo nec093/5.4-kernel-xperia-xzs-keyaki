@@ -24,7 +24,6 @@
 #include <linux/media.h>
 #include <linux/module.h>
 #include <linux/of_gpio.h>
-#include <linux/of_graph.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
@@ -36,7 +35,7 @@
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-mediabus.h>
 #include <media/i2c/s5c73m3.h>
-#include <media/v4l2-fwnode.h>
+#include <media/v4l2-of.h>
 
 #include "s5c73m3.h"
 
@@ -1394,7 +1393,7 @@ static int __s5c73m3_power_on(struct s5c73m3 *state)
 	s5c73m3_gpio_deassert(state, STBY);
 	usleep_range(100, 200);
 
-	s5c73m3_gpio_deassert(state, RSET);
+	s5c73m3_gpio_deassert(state, RST);
 	usleep_range(50, 100);
 
 	return 0;
@@ -1409,7 +1408,7 @@ static int __s5c73m3_power_off(struct s5c73m3 *state)
 {
 	int i, ret;
 
-	if (s5c73m3_gpio_assert(state, RSET))
+	if (s5c73m3_gpio_assert(state, RST))
 		usleep_range(10, 50);
 
 	if (s5c73m3_gpio_assert(state, STBY))
@@ -1603,7 +1602,7 @@ static int s5c73m3_get_platform_data(struct s5c73m3 *state)
 	const struct s5c73m3_platform_data *pdata = dev->platform_data;
 	struct device_node *node = dev->of_node;
 	struct device_node *node_ep;
-	struct v4l2_fwnode_endpoint ep;
+	struct v4l2_of_endpoint ep;
 	int ret;
 
 	if (!node) {
@@ -1614,7 +1613,7 @@ static int s5c73m3_get_platform_data(struct s5c73m3 *state)
 
 		state->mclk_frequency = pdata->mclk_frequency;
 		state->gpio[STBY] = pdata->gpio_stby;
-		state->gpio[RSET] = pdata->gpio_reset;
+		state->gpio[RST] = pdata->gpio_reset;
 		return 0;
 	}
 
@@ -1635,11 +1634,12 @@ static int s5c73m3_get_platform_data(struct s5c73m3 *state)
 
 	node_ep = of_graph_get_next_endpoint(node, NULL);
 	if (!node_ep) {
-		dev_warn(dev, "no endpoint defined for node: %pOF\n", node);
+		dev_warn(dev, "no endpoint defined for node: %s\n",
+						node->full_name);
 		return 0;
 	}
 
-	ret = v4l2_fwnode_endpoint_parse(of_fwnode_handle(node_ep), &ep);
+	ret = v4l2_of_parse_endpoint(node_ep, &ep);
 	of_node_put(node_ep);
 	if (ret)
 		return ret;

@@ -148,7 +148,8 @@ MODULE_PARM_DESC(irq_debug, "irq handler debug messages, default is 0 (no)");
 MODULE_PARM_DESC(disable_ir, "disable infrared remote support");
 MODULE_PARM_DESC(gbuffers, "number of capture buffers. range 2-32, default 8");
 MODULE_PARM_DESC(gbufsize, "size of the capture buffers, default is 0x208000");
-MODULE_PARM_DESC(reset_crop, "reset cropping parameters at open(), default is 1 (yes) for compatibility with older applications");
+MODULE_PARM_DESC(reset_crop, "reset cropping parameters at open(), default "
+		 "is 1 (yes) for compatibility with older applications");
 MODULE_PARM_DESC(automute, "mute audio on bad/missing video signal, default is 1 (yes)");
 MODULE_PARM_DESC(chroma_agc, "enables the AGC of chroma signal, default is 0 (no)");
 MODULE_PARM_DESC(agc_crush, "enables the luminance AGC crush, default is 1 (yes)");
@@ -1702,7 +1703,7 @@ static void buffer_release(struct videobuf_queue *q, struct videobuf_buffer *vb)
 	bttv_dma_free(q,fh->btv,buf);
 }
 
-static const struct videobuf_queue_ops bttv_video_qops = {
+static struct videobuf_queue_ops bttv_video_qops = {
 	.buf_setup    = buffer_setup,
 	.buf_prepare  = buffer_prepare,
 	.buf_queue    = buffer_queue,
@@ -3505,7 +3506,8 @@ static void bttv_irq_debug_low_latency(struct bttv *btv, u32 rc)
 		(unsigned long)rc);
 
 	if (0 == (btread(BT848_DSTATUS) & BT848_DSTATUS_HLOC)) {
-		pr_notice("%d: Oh, there (temporarily?) is no input signal. Ok, then this is harmless, don't worry ;)\n",
+		pr_notice("%d: Oh, there (temporarily?) is no input signal. "
+			  "Ok, then this is harmless, don't worry ;)\n",
 			  btv->c.nr);
 		return;
 	}
@@ -4043,7 +4045,9 @@ static int bttv_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	INIT_LIST_HEAD(&btv->capture);
 	INIT_LIST_HEAD(&btv->vcapture);
 
-	setup_timer(&btv->timeout, bttv_irq_timeout, (unsigned long)btv);
+	init_timer(&btv->timeout);
+	btv->timeout.function = bttv_irq_timeout;
+	btv->timeout.data     = (unsigned long)btv;
 
 	btv->i2c_rc = -1;
 	btv->tuner_type  = UNSET;
@@ -4055,13 +4059,11 @@ static int bttv_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	btv->id  = dev->device;
 	if (pci_enable_device(dev)) {
 		pr_warn("%d: Can't enable device\n", btv->c.nr);
-		result = -EIO;
-		goto free_mem;
+		return -EIO;
 	}
 	if (pci_set_dma_mask(dev, DMA_BIT_MASK(32))) {
 		pr_warn("%d: No suitable DMA available\n", btv->c.nr);
-		result = -EIO;
-		goto free_mem;
+		return -EIO;
 	}
 	if (!request_mem_region(pci_resource_start(dev,0),
 				pci_resource_len(dev,0),
@@ -4069,8 +4071,7 @@ static int bttv_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 		pr_warn("%d: can't request iomem (0x%llx)\n",
 			btv->c.nr,
 			(unsigned long long)pci_resource_start(dev, 0));
-		result = -EBUSY;
-		goto free_mem;
+		return -EBUSY;
 	}
 	pci_set_master(dev);
 	pci_set_command(dev);
@@ -4256,10 +4257,6 @@ fail0:
 	release_mem_region(pci_resource_start(btv->c.pci,0),
 			   pci_resource_len(btv->c.pci,0));
 	pci_disable_device(btv->c.pci);
-
-free_mem:
-	bttvs[btv->c.nr] = NULL;
-	kfree(btv);
 	return result;
 }
 
@@ -4395,7 +4392,7 @@ static int bttv_resume(struct pci_dev *pci_dev)
 }
 #endif
 
-static const struct pci_device_id bttv_pci_tbl[] = {
+static struct pci_device_id bttv_pci_tbl[] = {
 	{PCI_VDEVICE(BROOKTREE, PCI_DEVICE_ID_BT848), 0},
 	{PCI_VDEVICE(BROOKTREE, PCI_DEVICE_ID_BT849), 0},
 	{PCI_VDEVICE(BROOKTREE, PCI_DEVICE_ID_BT878), 0},

@@ -454,8 +454,9 @@ static void isp_vma_close(struct vm_area_struct *vma)
 	pr_debug("%s: close called\n", __func__);
 }
 
-static int isp_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+static int isp_vma_fault(struct vm_fault *vmf)
 {
+	struct vm_area_struct *vma = vmf->vma;
 	struct page *page;
 	struct vfe_device *vfe_dev = vma->vm_private_data;
 	struct isp_proc *isp_page = NULL;

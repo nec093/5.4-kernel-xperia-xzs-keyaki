@@ -13,6 +13,8 @@
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
+#include <linux/sched/clock.h>
+#include <uapi/linux/sched/types.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
@@ -1349,7 +1351,7 @@ static void mdss_mdp_overlay_cleanup(struct msm_fb_data_type *mfd,
 			tmp = (struct mdss_mdp_pipe *)pipe->multirect.next;
 			if (tmp)
 				skip_fetch_halt =
-					atomic_read(&tmp->kref.refcount);
+					kref_read(&tmp->kref);
 		}
 
 		/* make sure pipe fetch has been halted before freeing buffer */

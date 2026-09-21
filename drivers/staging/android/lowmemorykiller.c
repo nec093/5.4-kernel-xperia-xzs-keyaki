@@ -181,7 +181,7 @@ static int lmk_vmpressure_notifier(struct notifier_block *nb,
 		other_file = global_node_page_state(NR_FILE_PAGES) -
 			global_node_page_state(NR_SHMEM) -
 			total_swapcache_pages();
-		other_free = global_page_state(NR_FREE_PAGES);
+		other_free = global_zone_page_state(NR_FREE_PAGES);
 
 		atomic_set(&shift_adj, 1);
 		trace_almk_vmpressure(pressure, other_free, other_file);
@@ -196,7 +196,7 @@ static int lmk_vmpressure_notifier(struct notifier_block *nb,
 			global_node_page_state(NR_SHMEM) -
 			total_swapcache_pages();
 
-		other_free = global_page_state(NR_FREE_PAGES);
+		other_free = global_zone_page_state(NR_FREE_PAGES);
 
 		if ((other_free < minfree_array[array_size - 1]) &&
 		    (other_file < vmpressure_file_min)) {
@@ -208,7 +208,7 @@ static int lmk_vmpressure_notifier(struct notifier_block *nb,
 			global_node_page_state(NR_SHMEM) -
 			total_swapcache_pages();
 
-		other_free = global_page_state(NR_FREE_PAGES);
+		other_free = global_zone_page_state(NR_FREE_PAGES);
 		/*
 		 * shift_adj would have been set by a previous invocation
 		 * of notifier, which is not followed by a lowmem_shrink yet.
@@ -484,7 +484,7 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		minfree_size = forced_lowmem_minfree_size;
 	}
 
-	other_free = global_page_state(NR_FREE_PAGES) - totalreserve_pages;
+	other_free = global_zone_page_state(NR_FREE_PAGES) - totalreserve_pages;
 
 	if (global_node_page_state(NR_SHMEM) + total_swapcache_pages() +
 			global_node_page_state(NR_UNEVICTABLE) <
@@ -634,17 +634,17 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 			cache_size, cache_limit,
 			min_score_adj,
 			free,
-			global_page_state(NR_FREE_CMA_PAGES) *
+			global_zone_page_state(NR_FREE_CMA_PAGES) *
 			(long)(PAGE_SIZE / 1024),
 			totalreserve_pages * (long)(PAGE_SIZE / 1024),
-			global_page_state(NR_FREE_PAGES) *
+			global_zone_page_state(NR_FREE_PAGES) *
 			(long)(PAGE_SIZE / 1024),
 			global_node_page_state(NR_FILE_PAGES) *
 			(long)(PAGE_SIZE / 1024),
 			sc->gfp_mask);
 
 		if (lowmem_debug_level >= 2 && selected_oom_score_adj == 0) {
-			show_mem(SHOW_MEM_FILTER_NODES);
+			show_mem(SHOW_MEM_FILTER_NODES, NULL);
 			show_mem_call_notifiers();
 			dump_tasks(NULL, NULL);
 		}

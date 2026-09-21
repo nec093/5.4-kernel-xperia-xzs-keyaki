@@ -13,6 +13,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -251,10 +255,6 @@ static void reg_r(struct gspca_dev *gspca_dev,
 		PERR("reg_r: buffer overflow\n");
 		return;
 	}
-	if (len == 0) {
-		PERR("reg_r: zero-length read\n");
-		return;
-	}
 	if (gspca_dev->usb_err < 0)
 		return;
 	ret = usb_control_msg(gspca_dev->dev,
@@ -263,7 +263,7 @@ static void reg_r(struct gspca_dev *gspca_dev,
 			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 			0,		/* value */
 			index,
-			gspca_dev->usb_buf, len,
+			len ? gspca_dev->usb_buf : NULL, len,
 			500);
 	if (ret < 0) {
 		pr_err("reg_r err %d\n", ret);
@@ -373,7 +373,8 @@ static void spca504_read_info(struct gspca_dev *gspca_dev)
 		info[i] = gspca_dev->usb_buf[0];
 	}
 	PDEBUG(D_STREAM,
-		"Read info: %d %d %d %d %d %d. Should be 1,0,2,2,0,0",
+		"Read info: %d %d %d %d %d %d."
+		" Should be 1,0,2,2,0,0",
 		info[0], info[1], info[2],
 		info[3], info[4], info[5]);
 }
@@ -738,7 +739,7 @@ static int sd_start(struct gspca_dev *gspca_dev)
 		case MegaImageVI:
 			reg_w_riv(gspca_dev, 0xf0, 0, 0);
 			spca504B_WaitCmdStatus(gspca_dev);
-			reg_w_riv(gspca_dev, 0xf0, 4, 0);
+			reg_r(gspca_dev, 0xf0, 4, 0);
 			spca504B_WaitCmdStatus(gspca_dev);
 			break;
 		default:

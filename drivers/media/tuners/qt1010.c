@@ -13,6 +13,10 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include "qt1010.h"
 #include "qt1010_priv.h"
@@ -351,12 +355,11 @@ static int qt1010_init(struct dvb_frontend *fe)
 			else
 				valptr = &tmpval;
 
-			if (i >= ARRAY_SIZE(i2c_data) - 1)
-				err = -EIO;
-			else
-				err = qt1010_init_meas1(priv, i2c_data[i + 1].reg,
-							i2c_data[i].reg,
-							i2c_data[i].val, valptr);
+			BUG_ON(i >= ARRAY_SIZE(i2c_data) - 1);
+
+			err = qt1010_init_meas1(priv, i2c_data[i+1].reg,
+						i2c_data[i].reg,
+						i2c_data[i].val, valptr);
 			i++;
 			break;
 		}
@@ -374,10 +377,11 @@ static int qt1010_init(struct dvb_frontend *fe)
 	return qt1010_set_params(fe);
 }
 
-static void qt1010_release(struct dvb_frontend *fe)
+static int qt1010_release(struct dvb_frontend *fe)
 {
 	kfree(fe->tuner_priv);
 	fe->tuner_priv = NULL;
+	return 0;
 }
 
 static int qt1010_get_frequency(struct dvb_frontend *fe, u32 *frequency)
@@ -447,7 +451,7 @@ struct dvb_frontend * qt1010_attach(struct dvb_frontend *fe,
 	fe->tuner_priv = priv;
 	return fe;
 }
-EXPORT_SYMBOL_GPL(qt1010_attach);
+EXPORT_SYMBOL(qt1010_attach);
 
 MODULE_DESCRIPTION("Quantek QT1010 silicon tuner driver");
 MODULE_AUTHOR("Antti Palosaari <crope@iki.fi>");

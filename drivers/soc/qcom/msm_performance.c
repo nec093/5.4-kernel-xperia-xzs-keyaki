@@ -96,9 +96,7 @@ static int set_cpu_min_freq(const char *buf, const struct kernel_param *kp)
 			continue;
 
 		if (cpu_online(i) && (policy.min != i_cpu_stats->min)) {
-			ret = cpufreq_update_policy(i);
-			if (ret)
-				continue;
+			cpufreq_update_policy(i);
 		}
 		for_each_cpu(j, policy.related_cpus)
 			cpumask_clear_cpu(j, limit_mask);
@@ -171,9 +169,7 @@ static int set_cpu_max_freq(const char *buf, const struct kernel_param *kp)
 			continue;
 
 		if (cpu_online(i) && (policy.max != i_cpu_stats->max)) {
-			ret = cpufreq_update_policy(i);
-			if (ret)
-				continue;
+			cpufreq_update_policy(i);
 		}
 		for_each_cpu(j, policy.related_cpus)
 			cpumask_clear_cpu(j, limit_mask);

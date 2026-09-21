@@ -30,7 +30,7 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-mediabus.h>
-#include <media/v4l2-fwnode.h>
+#include <media/v4l2-of.h>
 
 static int debug;
 module_param(debug, int, 0644);
@@ -238,7 +238,7 @@ struct s5k5baf_gpio {
 
 enum s5k5baf_gpio_id {
 	STBY,
-	RSET,
+	RST,
 	NUM_GPIOS,
 };
 
@@ -973,7 +973,7 @@ static int s5k5baf_power_on(struct s5k5baf *state)
 
 	s5k5baf_gpio_deassert(state, STBY);
 	usleep_range(50, 100);
-	s5k5baf_gpio_deassert(state, RSET);
+	s5k5baf_gpio_deassert(state, RST);
 	return 0;
 
 err_reg_dis:
@@ -991,7 +991,7 @@ static int s5k5baf_power_off(struct s5k5baf *state)
 	state->apply_cfg = 0;
 	state->apply_crop = 0;
 
-	s5k5baf_gpio_assert(state, RSET);
+	s5k5baf_gpio_assert(state, RST);
 	s5k5baf_gpio_assert(state, STBY);
 
 	if (!IS_ERR(state->clock))
@@ -1374,7 +1374,7 @@ static int s5k5baf_get_selection(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_selection *sel)
 {
-	enum selection_rect rtype;
+	static enum selection_rect rtype;
 	struct s5k5baf *state = to_s5k5baf(sd);
 
 	rtype = s5k5baf_get_sel_rect(sel->pad, sel->target);
@@ -1841,7 +1841,7 @@ static int s5k5baf_parse_device_node(struct s5k5baf *state, struct device *dev)
 {
 	struct device_node *node = dev->of_node;
 	struct device_node *node_ep;
-	struct v4l2_fwnode_endpoint ep;
+	struct v4l2_of_endpoint ep;
 	int ret;
 
 	if (!node) {
@@ -1863,11 +1863,12 @@ static int s5k5baf_parse_device_node(struct s5k5baf *state, struct device *dev)
 
 	node_ep = of_graph_get_next_endpoint(node, NULL);
 	if (!node_ep) {
-		dev_err(dev, "no endpoint defined at node %pOF\n", node);
+		dev_err(dev, "no endpoint defined at node %s\n",
+			node->full_name);
 		return -EINVAL;
 	}
 
-	ret = v4l2_fwnode_endpoint_parse(of_fwnode_handle(node_ep), &ep);
+	ret = v4l2_of_parse_endpoint(node_ep, &ep);
 	of_node_put(node_ep);
 	if (ret)
 		return ret;
@@ -1881,8 +1882,8 @@ static int s5k5baf_parse_device_node(struct s5k5baf *state, struct device *dev)
 	case V4L2_MBUS_PARALLEL:
 		break;
 	default:
-		dev_err(dev, "unsupported bus in endpoint defined at node %pOF\n",
-			node);
+		dev_err(dev, "unsupported bus in endpoint defined at node %s\n",
+			node->full_name);
 		return -EINVAL;
 	}
 

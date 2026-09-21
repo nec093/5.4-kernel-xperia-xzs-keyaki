@@ -79,7 +79,7 @@ static int secure_buffer_change_chunk(u32 chunks,
 				SCM_VAL);
 
 	kmap_flush_unused();
-	kmap_atomic_flush_unused();
+	kmap_flush_unused();
 
 	if (!is_scm_armv8()) {
 		ret = scm_call(SCM_SVC_MP, MEM_PROTECT_LOCK_ID2,
