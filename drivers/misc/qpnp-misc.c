@@ -291,6 +291,21 @@ static struct class_attribute twm_attributes[] = {
 	__ATTR_NULL,
 };
 
+static struct attribute *twm_attrs[] = {
+	&twm_attributes[TWM_ENABLE].attr,
+	&twm_attributes[TWM_EXIT].attr,
+	NULL,
+};
+
+static const struct attribute_group twm_group = {
+	.attrs = twm_attrs,
+};
+
+static const struct attribute_group *twm_groups[] = {
+	&twm_group,
+	NULL,
+};
+
 int qpnp_misc_twm_notifier_register(struct notifier_block *nb)
 {
 	return raw_notifier_chain_register(&twm_notifier, nb);
@@ -378,7 +393,7 @@ static int qpnp_misc_config(struct qpnp_misc_dev *mdev)
 	if (mdev->support_twm_config) {
 		mdev->twm_class.name = "pmic_twm",
 		mdev->twm_class.owner = THIS_MODULE,
-		mdev->twm_class.class_attrs = twm_attributes;
+		mdev->twm_class.class_groups = twm_groups;
 
 		rc = class_register(&mdev->twm_class);
 		if (rc < 0) {

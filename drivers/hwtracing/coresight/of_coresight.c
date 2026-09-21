@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2016-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,7 @@
 #include <linux/coresight.h>
 #include <linux/cpumask.h>
 #include <asm/smp_plat.h>
-
+#include <linux/coresight-cti.h>
 
 static int of_dev_node_match(struct device *dev, void *data)
 {
@@ -52,7 +52,7 @@ of_coresight_get_endpoint_device(struct device_node *endpoint)
 			       endpoint, of_dev_node_match);
 }
 
-static void of_coresight_get_ports(const struct device_node *node,
+static void of_coresight_get_ports(struct device_node *node,
 				   int *nr_inport, int *nr_outport)
 {
 	struct device_node *ep = NULL;
@@ -101,40 +101,14 @@ static int of_coresight_alloc_memory(struct device *dev,
 	return 0;
 }
 
-int of_coresight_get_cpu(const struct device_node *node)
+struct coresight_platform_data *of_get_coresight_platform_data(
+				struct device *dev, struct device_node *node)
 {
-	int cpu;
-	bool found;
-	struct device_node *dn, *np;
-
-	dn = of_parse_phandle(node, "cpu", 0);
-
-	/* Affinity defaults to CPU0 */
-	if (!dn)
-		return 0;
-
-	for_each_possible_cpu(cpu) {
-		np = of_cpu_device_node_get(cpu);
-		found = (dn == np);
-		of_node_put(np);
-		if (found)
-			break;
-	}
-	of_node_put(dn);
-
-	/* Affinity to CPU0 if no cpu nodes are found */
-	return found ? cpu : 0;
-}
-EXPORT_SYMBOL_GPL(of_coresight_get_cpu);
-
-struct coresight_platform_data *
-of_get_coresight_platform_data(struct device *dev,
-			       const struct device_node *node)
-{
-	int i = 0, ret = 0;
+	int i = 0, ret = 0, cpu;
 	struct coresight_platform_data *pdata;
 	struct of_endpoint endpoint, rendpoint;
 	struct device *rdev;
+	struct device_node *dn;
 	struct device_node *ep = NULL;
 	struct device_node *rparent = NULL;
 	struct device_node *rport = NULL;
@@ -143,8 +117,11 @@ of_get_coresight_platform_data(struct device *dev,
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
 
-	/* Use device name as sysfs handle */
-	pdata->name = dev_name(dev);
+	ret = of_property_read_string(node, "coresight-name", &pdata->name);
+	if (ret) {
+		/* Use device name as sysfs handle */
+		pdata->name = dev_name(dev);
+	}
 
 	/* Get the number of input and output port for this component */
 	of_coresight_get_ports(node, &pdata->nr_inport, &pdata->nr_outport);
@@ -194,15 +171,88 @@ of_get_coresight_platform_data(struct device *dev,
 			if (!rdev)
 				return ERR_PTR(-EPROBE_DEFER);
 
-			pdata->child_names[i] = dev_name(rdev);
+			ret = of_property_read_string(rparent, "coresight-name",
+						      &pdata->child_names[i]);
+			if (ret)
+				pdata->child_names[i] = dev_name(rdev);
+
 			pdata->child_ports[i] = rendpoint.id;
 
 			i++;
 		} while (ep);
 	}
 
-	pdata->cpu = of_coresight_get_cpu(node);
+	/* Affinity defaults to invalid */
+	pdata->cpu = -1;
+	dn = of_parse_phandle(node, "cpu", 0);
+	for (cpu = 0; dn && cpu < nr_cpu_ids; cpu++) {
+		if (dn == of_get_cpu_node(cpu, NULL)) {
+			pdata->cpu = cpu;
+			break;
+		}
+	}
+	of_node_put(dn);
 
 	return pdata;
 }
 EXPORT_SYMBOL_GPL(of_get_coresight_platform_data);
+
+struct coresight_cti_data *of_get_coresight_cti_data(
+				struct device *dev, struct device_node *node)
+{
+	int i, ret;
+	uint32_t ctis_len;
+	struct device_node *child_node;
+	struct coresight_cti_data *ctidata;
+
+	ctidata = devm_kzalloc(dev, sizeof(*ctidata), GFP_KERNEL);
+	if (!ctidata)
+		return ERR_PTR(-ENOMEM);
+
+	if (of_get_property(node, "coresight-ctis", &ctis_len))
+		ctidata->nr_ctis = ctis_len/sizeof(uint32_t);
+	else
+		return ERR_PTR(-EINVAL);
+
+	if (ctidata->nr_ctis) {
+		ctidata->names = devm_kzalloc(dev, ctidata->nr_ctis *
+					      sizeof(*ctidata->names),
+					      GFP_KERNEL);
+		if (!ctidata->names)
+			return ERR_PTR(-ENOMEM);
+
+		for (i = 0; i < ctidata->nr_ctis; i++) {
+			child_node = of_parse_phandle(node, "coresight-ctis",
+						      i);
+			if (!child_node)
+				return ERR_PTR(-EINVAL);
+
+			ret = of_property_read_string(child_node,
+						      "coresight-name",
+						      &ctidata->names[i]);
+			of_node_put(child_node);
+			if (ret)
+				return ERR_PTR(ret);
+		}
+	}
+	return ctidata;
+}
+EXPORT_SYMBOL(of_get_coresight_cti_data);
+
+int of_get_coresight_csr_name(struct device_node *node, const char **csr_name)
+{
+	int  ret;
+	struct device_node *csr_node;
+
+	csr_node = of_parse_phandle(node, "coresight-csr", 0);
+	if (!csr_node)
+		return -EINVAL;
+
+	ret = of_property_read_string(csr_node, "coresight-name", csr_name);
+	of_node_put(csr_node);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+EXPORT_SYMBOL(of_get_coresight_csr_name);

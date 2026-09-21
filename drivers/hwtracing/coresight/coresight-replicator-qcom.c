@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2015,2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -95,28 +95,6 @@ static const struct coresight_ops replicator_cs_ops = {
 	.link_ops	= &replicator_link_ops,
 };
 
-#define coresight_replicator_reg(name, offset) \
-	coresight_simple_reg32(struct replicator_state, name, offset)
-
-coresight_replicator_reg(idfilter0, REPLICATOR_IDFILTER0);
-coresight_replicator_reg(idfilter1, REPLICATOR_IDFILTER1);
-
-static struct attribute *replicator_mgmt_attrs[] = {
-	&dev_attr_idfilter0.attr,
-	&dev_attr_idfilter1.attr,
-	NULL,
-};
-
-static const struct attribute_group replicator_mgmt_group = {
-	.attrs = replicator_mgmt_attrs,
-	.name = "mgmt",
-};
-
-static const struct attribute_group *replicator_groups[] = {
-	&replicator_mgmt_group,
-	NULL,
-};
-
 static int replicator_probe(struct amba_device *adev, const struct amba_id *id)
 {
 	int ret;
@@ -154,18 +132,18 @@ static int replicator_probe(struct amba_device *adev, const struct amba_id *id)
 
 	drvdata->base = base;
 	dev_set_drvdata(dev, drvdata);
-	pm_runtime_put(&adev->dev);
 
 	desc.type = CORESIGHT_DEV_TYPE_LINK;
 	desc.subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_SPLIT;
 	desc.ops = &replicator_cs_ops;
 	desc.pdata = adev->dev.platform_data;
 	desc.dev = &adev->dev;
-	desc.groups = replicator_groups;
 	drvdata->csdev = coresight_register(&desc);
 	if (IS_ERR(drvdata->csdev))
 		return PTR_ERR(drvdata->csdev);
 
+	pm_runtime_put(&adev->dev);
+	dev_info(dev, "%s initialized\n", (char *)id->data);
 	return 0;
 }
 
@@ -197,22 +175,18 @@ static const struct dev_pm_ops replicator_dev_pm_ops = {
 			   NULL)
 };
 
-static const struct amba_id replicator_ids[] = {
+static struct amba_id replicator_ids[] = {
 	{
 		.id     = 0x0003b909,
 		.mask   = 0x0003ffff,
-	},
-	{
-		/* Coresight SoC-600 */
-		.id     = 0x000bb9ec,
-		.mask   = 0x000fffff,
+		.data	= "REPLICATOR 1.0",
 	},
 	{ 0, 0 },
 };
 
 static struct amba_driver replicator_driver = {
 	.drv = {
-		.name	= "coresight-dynamic-replicator",
+		.name	= "coresight-replicator-qcom",
 		.pm	= &replicator_dev_pm_ops,
 		.suppress_bind_attrs = true,
 	},

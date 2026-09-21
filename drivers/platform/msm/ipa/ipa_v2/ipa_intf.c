@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/sched/signal.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include "ipa_i.h"

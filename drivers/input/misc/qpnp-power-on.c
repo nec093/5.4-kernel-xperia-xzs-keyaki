@@ -12,6 +12,9 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+
+extern unsigned int boot_reason;
+extern unsigned int cold_boot;
 #include <linux/debugfs.h>
 #include <linux/kernel.h>
 #include <linux/regmap.h>

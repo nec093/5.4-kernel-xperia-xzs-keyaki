@@ -135,7 +135,7 @@ static int pmic_spmi_probe(struct spmi_device *sdev)
 {
 	struct regmap *regmap;
 
-	if (of_property_read_bool(root, "qcom,can-sleep"))
+	if (of_property_read_bool(sdev->dev.of_node, "qcom,can-sleep"))
 		regmap = devm_regmap_init_spmi_ext(sdev,
 						&spmi_regmap_can_sleep_config);
 	else

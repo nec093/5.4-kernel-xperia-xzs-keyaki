@@ -1360,7 +1360,7 @@ static ssize_t mhi_sm_debugfs_write(struct file *file,
 		return -EFAULT;
 	}
 
-	if (sizeof(dbg_buff) < count + 1)
+	if (count >= sizeof(dbg_buff))
 		return -EFAULT;
 
 	missing = copy_from_user(dbg_buff, ubuf, count);

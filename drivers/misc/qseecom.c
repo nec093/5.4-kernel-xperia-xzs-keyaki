@@ -15,6 +15,7 @@
 
 #define pr_fmt(fmt) "QSEECOM: %s: " fmt, __func__
 
+#include <linux/sched/signal.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/module.h>

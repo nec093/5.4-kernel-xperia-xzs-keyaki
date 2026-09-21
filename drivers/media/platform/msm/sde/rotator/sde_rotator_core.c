@@ -13,6 +13,7 @@
 
 #define pr_fmt(fmt)	"%s:%d: " fmt, __func__, __LINE__
 
+#include <uapi/linux/sched/types.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/fs.h>

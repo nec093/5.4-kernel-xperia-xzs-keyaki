@@ -406,13 +406,6 @@ static void dm_dispatch_clone_request(struct request *clone, struct request *rq)
 		dm_complete_request(rq, r);
 }
 
-void dm_dispatch_request(struct request *rq)
-{
-	struct dm_rq_target_io *tio = tio_from_request(rq);
-
-	dm_dispatch_clone_request(tio->clone, rq);
-}
-
 static int dm_rq_bio_constructor(struct bio *bio, struct bio *bio_orig,
 				 void *data)
 {
@@ -674,12 +667,8 @@ static void dm_old_request_fn(struct request_queue *q)
 		init_tio(tio, rq, md);
 		/* Establish tio->ti before queuing work (map_tio_request) */
 		tio->ti = ti;
-		spin_unlock(q->queue_lock);
-		if (map_request(tio) == DM_MAPIO_REQUEUE)
-			dm_requeue_original_request(tio, false);
-
+		kthread_queue_work(&md->kworker, &tio->work);
 		BUG_ON(!irqs_disabled());
-		spin_lock(q->queue_lock);
 	}
 }
 

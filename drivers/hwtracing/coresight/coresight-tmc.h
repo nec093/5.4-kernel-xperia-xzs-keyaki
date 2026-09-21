@@ -19,6 +19,15 @@
 #define _CORESIGHT_TMC_H
 
 #include <linux/miscdevice.h>
+#include <linux/delay.h>
+#include <asm/cacheflush.h>
+#include <linux/of_address.h>
+#include <linux/amba/bus.h>
+#include <linux/usb_bam.h>
+#include <linux/usb/usb_qdss.h>
+#include <linux/coresight-cti.h>
+
+#include "coresight-byte-cntr.h"
 
 #define TMC_RSZ			0x004
 #define TMC_STS			0x00c
@@ -54,32 +63,13 @@
 #define TMC_STS_TMCREADY_BIT	2
 #define TMC_STS_FULL		BIT(0)
 #define TMC_STS_TRIGGERED	BIT(1)
-/*
- * TMC_AXICTL - 0x110
- *
- * TMC AXICTL format for SoC-400
- *	Bits [0-1]	: ProtCtrlBit0-1
- *	Bits [2-5]	: CacheCtrlBits 0-3 (AXCACHE)
- *	Bit  6		: Reserved
- *	Bit  7		: ScatterGatherMode
- *	Bits [8-11]	: WrBurstLen
- *	Bits [12-31]	: Reserved.
- * TMC AXICTL format for SoC-600, as above except:
- *	Bits [2-5]	: AXI WCACHE
- *	Bits [16-19]	: AXI RCACHE
- *	Bits [20-31]	: Reserved
- */
-#define TMC_AXICTL_CLEAR_MASK 0xfbf
-#define TMC_AXICTL_ARCACHE_MASK (0xf << 16)
-
+/* TMC_AXICTL - 0x110 */
 #define TMC_AXICTL_PROT_CTL_B0	BIT(0)
 #define TMC_AXICTL_PROT_CTL_B1	BIT(1)
+#define TMC_AXICTL_CACHE_CTL_B0	BIT(2)
+#define TMC_AXICTL_CACHE_CTL_B1	BIT(3)
 #define TMC_AXICTL_SCT_GAT_MODE	BIT(7)
 #define TMC_AXICTL_WR_BURST_16	0xF00
-/* Write-back Read and Write-allocate */
-#define TMC_AXICTL_AXCACHE_OS	(0xf << 2)
-#define TMC_AXICTL_ARCACHE_OS	(0xf << 16)
-
 /* TMC_FFCR - 0x304 */
 #define TMC_FFCR_FLUSHMAN_BIT	6
 #define TMC_FFCR_EN_FMT		BIT(0)
@@ -89,12 +79,14 @@
 #define TMC_FFCR_TRIGON_TRIGIN	BIT(8)
 #define TMC_FFCR_STOP_ON_FLUSH	BIT(12)
 
+#define TMC_ETR_SG_ENT_TO_BLK(phys_pte)	(((phys_addr_t)phys_pte >> 4)	\
+					 << PAGE_SHIFT)
+#define TMC_ETR_SG_ENT(phys_pte)	(((phys_pte >> PAGE_SHIFT) << 4) | 0x2)
+#define TMC_ETR_SG_NXT_TBL(phys_pte)	(((phys_pte >> PAGE_SHIFT) << 4) | 0x3)
+#define TMC_ETR_SG_LST_ENT(phys_pte)	(((phys_pte >> PAGE_SHIFT) << 4) | 0x1)
 
-#define TMC_DEVID_NOSCAT	BIT(24)
-
-#define TMC_DEVID_AXIAW_VALID	BIT(16)
-#define TMC_DEVID_AXIAW_SHIFT	17
-#define TMC_DEVID_AXIAW_MASK	0x7f
+#define TMC_ETR_BAM_PIPE_INDEX	0
+#define TMC_ETR_BAM_NR_PIPES	2
 
 enum tmc_config_type {
 	TMC_CONFIG_TYPE_ETB,
@@ -115,23 +107,40 @@ enum tmc_mem_intf_width {
 	TMC_MEM_INTF_WIDTH_256BITS	= 8,
 };
 
-/* TMC ETR Capability bit definitions */
-#define TMC_ETR_SG			(0x1U << 0)
-/* ETR has separate read/write cache encodings */
-#define TMC_ETR_AXI_ARCACHE		(0x1U << 1)
-/*
- * TMC_ETR_SAVE_RESTORE - Values of RRP/RWP/STS.Full are
- * retained when TMC leaves Disabled state, allowing us to continue
- * the tracing from a point where we stopped. This also implies that
- * the RRP/RWP/STS.Full should always be programmed to the correct
- * value. Unfortunately this is not advertised by the hardware,
- * so we have to rely on PID of the IP to detect the functionality.
- */
-#define TMC_ETR_SAVE_RESTORE		(0x1U << 2)
+enum tmc_etr_mem_type {
+	TMC_ETR_MEM_TYPE_CONTIG,
+	TMC_ETR_MEM_TYPE_SG,
+};
 
-/* Coresight SoC-600 TMC-ETR unadvertised capabilities */
-#define CORESIGHT_SOC_600_ETR_CAPS	\
-	(TMC_ETR_SAVE_RESTORE | TMC_ETR_AXI_ARCACHE)
+static const char * const str_tmc_etr_mem_type[] = {
+	[TMC_ETR_MEM_TYPE_CONTIG]	= "contig",
+	[TMC_ETR_MEM_TYPE_SG]		= "sg",
+};
+
+enum tmc_etr_out_mode {
+	TMC_ETR_OUT_MODE_NONE,
+	TMC_ETR_OUT_MODE_MEM,
+	TMC_ETR_OUT_MODE_USB,
+};
+
+static const char * const str_tmc_etr_out_mode[] = {
+	[TMC_ETR_OUT_MODE_NONE]		= "none",
+	[TMC_ETR_OUT_MODE_MEM]		= "mem",
+	[TMC_ETR_OUT_MODE_USB]		= "usb",
+};
+
+struct tmc_etr_bam_data {
+	struct sps_bam_props	props;
+	unsigned long		handle;
+	struct sps_pipe		*pipe;
+	struct sps_connect	connect;
+	uint32_t		src_pipe_idx;
+	unsigned long		dest;
+	uint32_t		dest_pipe_idx;
+	struct sps_mem_buffer	desc_fifo;
+	struct sps_mem_buffer	data_fifo;
+	bool			enable;
+};
 
 /**
  * struct tmc_drvdata - specifics associated to an TMC component
@@ -149,8 +158,6 @@ enum tmc_mem_intf_width {
  * @config_type: TMC variant, must be of type @tmc_config_type.
  * @memwidth:	width of the memory interface databus, in bytes.
  * @trigger_cntr: amount of words to store after a trigger.
- * @etr_caps:	Bitmask of capabilities of the TMC ETR, inferred from the
- *		device configuration register (DEVID)
  */
 struct tmc_drvdata {
 	void __iomem		*base;
@@ -159,16 +166,33 @@ struct tmc_drvdata {
 	struct miscdevice	miscdev;
 	spinlock_t		spinlock;
 	bool			reading;
+	bool			enable;
 	char			*buf;
 	dma_addr_t		paddr;
-	void __iomem		*vaddr;
+	void			*vaddr;
 	u32			size;
 	u32			len;
 	u32			mode;
 	enum tmc_config_type	config_type;
 	enum tmc_mem_intf_width	memwidth;
+	struct mutex		mem_lock;
+	u32			mem_size;
 	u32			trigger_cntr;
-	u32			etr_caps;
+	enum tmc_etr_mem_type	mem_type;
+	enum tmc_etr_mem_type	memtype;
+	u32			delta_bottom;
+	int			sg_blk_num;
+	enum tmc_etr_out_mode	out_mode;
+	struct usb_qdss_ch	*usbch;
+	struct tmc_etr_bam_data	*bamdata;
+	bool			enable_to_bam;
+	bool			sticky_enable;
+	struct coresight_cti	*cti_flush;
+	struct coresight_cti	*cti_reset;
+	struct coresight_csr	*csr;
+	const char		*csr_name;
+	struct byte_cntr	*byte_cntr;
+	bool			force_reg_dump;
 };
 
 /* Generic functions */
@@ -184,42 +208,21 @@ extern const struct coresight_ops tmc_etb_cs_ops;
 extern const struct coresight_ops tmc_etf_cs_ops;
 
 /* ETR functions */
+void tmc_etr_sg_compute_read(struct tmc_drvdata *drvdata, loff_t *ppos,
+			     char **bufpp, size_t *len);
 int tmc_read_prepare_etr(struct tmc_drvdata *drvdata);
 int tmc_read_unprepare_etr(struct tmc_drvdata *drvdata);
+void __tmc_etr_disable_to_bam(struct tmc_drvdata *drvdata);
+void tmc_etr_bam_disable(struct tmc_drvdata *drvdata);
+void tmc_etr_enable_hw(struct tmc_drvdata *drvdata);
+void tmc_etr_disable_hw(struct tmc_drvdata *drvdata);
+void usb_notifier(void *priv, unsigned int event, struct qdss_request *d_req,
+		  struct usb_qdss_ch *ch);
+int tmc_etr_bam_init(struct amba_device *adev,
+		     struct tmc_drvdata *drvdata);
+extern struct byte_cntr *byte_cntr_init(struct amba_device *adev,
+					struct tmc_drvdata *drvdata);
+extern void tmc_etr_sg_rwp_pos(struct tmc_drvdata *drvdata, uint32_t rwp);
+
 extern const struct coresight_ops tmc_etr_cs_ops;
-
-
-#define TMC_REG_PAIR(name, lo_off, hi_off)				\
-static inline u64							\
-tmc_read_##name(struct tmc_drvdata *drvdata)				\
-{									\
-	return coresight_read_reg_pair(drvdata->base, lo_off, hi_off);	\
-}									\
-static inline void							\
-tmc_write_##name(struct tmc_drvdata *drvdata, u64 val)			\
-{									\
-	coresight_write_reg_pair(drvdata->base, val, lo_off, hi_off);	\
-}
-
-TMC_REG_PAIR(rrp, TMC_RRP, TMC_RRPHI)
-TMC_REG_PAIR(rwp, TMC_RWP, TMC_RWPHI)
-TMC_REG_PAIR(dba, TMC_DBALO, TMC_DBAHI)
-
-/* Initialise the caps from unadvertised static capabilities of the device */
-static inline void tmc_etr_init_caps(struct tmc_drvdata *drvdata, u32 dev_caps)
-{
-	WARN_ON(drvdata->etr_caps);
-	drvdata->etr_caps = dev_caps;
-}
-
-static inline void tmc_etr_set_cap(struct tmc_drvdata *drvdata, u32 cap)
-{
-	drvdata->etr_caps |= cap;
-}
-
-static inline bool tmc_etr_has_cap(struct tmc_drvdata *drvdata, u32 cap)
-{
-	return !!(drvdata->etr_caps & cap);
-}
-
 #endif

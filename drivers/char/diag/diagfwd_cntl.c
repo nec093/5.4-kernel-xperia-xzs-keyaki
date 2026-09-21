@@ -10,6 +10,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/sched/signal.h>
 #include <linux/slab.h>
 #include <linux/diagchar.h>
 #include <linux/kmemleak.h>

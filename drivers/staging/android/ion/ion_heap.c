@@ -15,6 +15,7 @@
  *
  */
 
+#include <uapi/linux/sched/types.h>
 #include <linux/err.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>

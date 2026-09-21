@@ -180,6 +180,11 @@ extern const struct dma_map_ops dma_virt_ops;
 
 #define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
 
+/* Removed from mainline in 4.13; CAF/Sony vendor code still compares against it */
+#ifndef DMA_ERROR_CODE
+#define DMA_ERROR_CODE	(~(dma_addr_t)0)
+#endif
+
 #define DMA_MASK_NONE	0x0ULL
 
 static inline int valid_dma_direction(int dma_direction)
