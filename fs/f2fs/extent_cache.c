@@ -376,7 +376,8 @@ static bool f2fs_lookup_extent_tree(struct inode *inode, pgoff_t pgofs,
 	struct extent_node *en;
 	bool ret = false;
 
-	f2fs_bug_on(sbi, !et);
+	if (!et)
+		return false;
 
 	trace_f2fs_lookup_extent_tree_start(inode, pgofs);
 
@@ -460,7 +461,7 @@ static struct extent_node *__insert_extent_tree(struct inode *inode,
 				struct rb_node *insert_parent)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
-	struct rb_node **p;
+	struct rb_node **p = &et->root.rb_node;
 	struct rb_node *parent = NULL;
 	struct extent_node *en = NULL;
 
@@ -709,9 +710,8 @@ void f2fs_drop_extent_tree(struct inode *inode)
 	if (!f2fs_may_extent_tree(inode))
 		return;
 
-	set_inode_flag(inode, FI_NO_EXTENT);
-
 	write_lock(&et->lock);
+	set_inode_flag(inode, FI_NO_EXTENT);
 	__free_extent_tree(sbi, et);
 	__drop_largest_extent(inode, 0, UINT_MAX);
 	write_unlock(&et->lock);

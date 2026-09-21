@@ -236,7 +236,7 @@ static void try_merge_map(struct extent_map_tree *tree, struct extent_map *em)
 	 * clearing the logging flag), so anything > 2 means it's being used by
 	 * other tasks too.
 	 */
-	if (atomic_read(&em->refs) > 2)
+	if (refcount_read(&em->refs) > 2)
 		return;
 
 	if (em->start != 0) {

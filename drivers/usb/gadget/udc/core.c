@@ -1145,8 +1145,12 @@ static inline void usb_gadget_udc_stop(struct usb_udc *udc)
 static inline void usb_gadget_udc_set_speed(struct usb_udc *udc,
 					    enum usb_device_speed speed)
 {
-	if (udc->gadget->ops->udc_set_speed)
-		udc->gadget->ops->udc_set_speed(udc->gadget, speed);
+	if (udc->gadget->ops->udc_set_speed) {
+		enum usb_device_speed s;
+
+		s = min(speed, udc->gadget->max_speed);
+		udc->gadget->ops->udc_set_speed(udc->gadget, s);
+	}
 }
 
 /**
@@ -1223,11 +1227,7 @@ int usb_add_gadget_udc_release(struct device *parent, struct usb_gadget *gadget,
 
 	udc = kzalloc(sizeof(*udc), GFP_KERNEL);
 	if (!udc)
-		goto err1;
-
-	ret = device_add(&gadget->dev);
-	if (ret)
-		goto err2;
+		goto err_put_gadget;
 
 	device_initialize(&udc->dev);
 	udc->dev.release = usb_udc_release;
@@ -1236,7 +1236,11 @@ int usb_add_gadget_udc_release(struct device *parent, struct usb_gadget *gadget,
 	udc->dev.parent = parent;
 	ret = dev_set_name(&udc->dev, "%s", kobject_name(&parent->kobj));
 	if (ret)
-		goto err3;
+		goto err_put_udc;
+
+	ret = device_add(&gadget->dev);
+	if (ret)
+		goto err_put_udc;
 
 	udc->gadget = gadget;
 	gadget->udc = udc;
@@ -1246,7 +1250,7 @@ int usb_add_gadget_udc_release(struct device *parent, struct usb_gadget *gadget,
 
 	ret = device_add(&udc->dev);
 	if (ret)
-		goto err4;
+		goto err_unlist_udc;
 
 	usb_gadget_set_state(gadget, USB_STATE_NOTATTACHED);
 	udc->vbus = true;
@@ -1254,27 +1258,25 @@ int usb_add_gadget_udc_release(struct device *parent, struct usb_gadget *gadget,
 	/* pick up one of pending gadget drivers */
 	ret = check_pending_gadget_drivers(udc);
 	if (ret)
-		goto err5;
+		goto err_del_udc;
 
 	mutex_unlock(&udc_lock);
 
 	return 0;
 
-err5:
+ err_del_udc:
 	device_del(&udc->dev);
 
-err4:
+ err_unlist_udc:
 	list_del(&udc->list);
 	mutex_unlock(&udc_lock);
 
-err3:
-	put_device(&udc->dev);
 	device_del(&gadget->dev);
 
-err2:
-	kfree(udc);
+ err_put_udc:
+	put_device(&udc->dev);
 
-err1:
+ err_put_gadget:
 	put_device(&gadget->dev);
 	return ret;
 }
@@ -1337,7 +1339,6 @@ static void usb_gadget_remove_driver(struct usb_udc *udc)
 	usb_gadget_udc_stop(udc);
 
 	udc->driver = NULL;
-	udc->dev.driver = NULL;
 	udc->gadget->dev.driver = NULL;
 }
 
@@ -1386,7 +1387,6 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 			driver->function);
 
 	udc->driver = driver;
-	udc->dev.driver = &driver->driver;
 	udc->gadget->dev.driver = &driver->driver;
 
 	usb_gadget_udc_set_speed(udc, driver->max_speed);
@@ -1408,7 +1408,6 @@ err1:
 		dev_err(&udc->dev, "failed to start %s: %d\n",
 			udc->driver->function, ret);
 	udc->driver = NULL;
-	udc->dev.driver = NULL;
 	udc->gadget->dev.driver = NULL;
 	return ret;
 }
@@ -1511,10 +1510,13 @@ static ssize_t usb_udc_softconn_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t n)
 {
 	struct usb_udc		*udc = container_of(dev, struct usb_udc, dev);
+	ssize_t			ret;
 
+	mutex_lock(&udc_lock);
 	if (!udc->driver) {
 		dev_err(dev, "soft-connect without a gadget driver\n");
-		return -EOPNOTSUPP;
+		ret = -EOPNOTSUPP;
+		goto out;
 	}
 
 	if (sysfs_streq(buf, "connect")) {
@@ -1526,10 +1528,14 @@ static ssize_t usb_udc_softconn_store(struct device *dev,
 		usb_gadget_udc_stop(udc);
 	} else {
 		dev_err(dev, "unsupported command '%s'\n", buf);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
-	return n;
+	ret = n;
+out:
+	mutex_unlock(&udc_lock);
+	return ret;
 }
 static DEVICE_ATTR(soft_connect, S_IWUSR, NULL, usb_udc_softconn_store);
 

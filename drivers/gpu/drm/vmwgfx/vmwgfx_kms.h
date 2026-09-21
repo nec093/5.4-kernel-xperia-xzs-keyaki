@@ -175,7 +175,7 @@ struct vmw_plane_state {
 	int pinned;
 
 	/* For CPU Blit */
-	struct ttm_bo_kmap_obj host_map, guest_map;
+	struct ttm_bo_kmap_obj host_map;
 	unsigned int cpp;
 };
 
@@ -445,5 +445,4 @@ int vmw_kms_stdu_dma(struct vmw_private *dev_priv,
 
 int vmw_kms_set_config(struct drm_mode_set *set,
 		       struct drm_modeset_acquire_ctx *ctx);
-
 #endif

@@ -621,7 +621,6 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
 				res_alloc->quota[t] = dev->caps.max_counters;
 				res_alloc->guaranteed[t] =
 					mlx4_calc_res_counter_guaranteed(dev, res_alloc, t);
-				res_alloc->res_free -= res_alloc->guaranteed[t];
 				break;
 			default:
 				break;
@@ -4989,6 +4988,7 @@ static int mlx4_do_mirror_rule(struct mlx4_dev *dev, struct res_fs_rule *fs_rule
 
 	if (!fs_rule->mirr_mbox) {
 		mlx4_err(dev, "rule mirroring mailbox is null\n");
+		mlx4_free_cmd_mailbox(dev, mailbox);
 		return -EINVAL;
 	}
 	memcpy(mailbox->buf, fs_rule->mirr_mbox, fs_rule->mirr_mbox_size);

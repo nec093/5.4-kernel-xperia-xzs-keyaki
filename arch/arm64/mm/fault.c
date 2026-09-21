@@ -816,6 +816,7 @@ asmlinkage void __exception do_el0_ia_bp_hardening(unsigned long addr,
 	do_mem_abort(addr, esr, regs);
 }
 
+
 /*
  * Handle stack alignment exceptions.
  */

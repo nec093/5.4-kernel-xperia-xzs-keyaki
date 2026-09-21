@@ -32,7 +32,6 @@
 
 #define _PAGE_BIT_SPECIAL	_PAGE_BIT_SOFTW1
 #define _PAGE_BIT_CPA_TEST	_PAGE_BIT_SOFTW1
-#define _PAGE_BIT_HIDDEN	_PAGE_BIT_SOFTW3 /* hidden by kmemcheck */
 #define _PAGE_BIT_SOFT_DIRTY	_PAGE_BIT_SOFTW3 /* software dirty tracking */
 #define _PAGE_BIT_DEVMAP	_PAGE_BIT_SOFTW4
 
@@ -79,18 +78,6 @@
 #define _PAGE_KNL_ERRATUM_MASK 0
 #endif
 
-#ifdef CONFIG_KMEMCHECK
-#define _PAGE_HIDDEN	(_AT(pteval_t, 1) << _PAGE_BIT_HIDDEN)
-#else
-#define _PAGE_HIDDEN	(_AT(pteval_t, 0))
-#endif
-
-/*
- * The same hidden bit is used by kmemcheck, but since kmemcheck
- * works on kernel pages while soft-dirty engine on user space,
- * they do not conflict with each other.
- */
-
 #ifdef CONFIG_MEM_SOFT_DIRTY
 #define _PAGE_SOFT_DIRTY	(_AT(pteval_t, 1) << _PAGE_BIT_SOFT_DIRTY)
 #else
@@ -122,7 +109,7 @@
 #define _PAGE_DEVMAP	(_AT(pteval_t, 0))
 #endif
 
-#define _PAGE_PROTNONE  (_AT(pteval_t, 1) << _PAGE_BIT_PROTNONE)
+#define _PAGE_PROTNONE	(_AT(pteval_t, 1) << _PAGE_BIT_PROTNONE)
 
 #define _PAGE_TABLE_NOENC	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER |\
 				 _PAGE_ACCESSED | _PAGE_DIRTY)
@@ -137,35 +124,8 @@
  */
 #define _PAGE_CHG_MASK	(PTE_PFN_MASK | _PAGE_PCD | _PAGE_PWT |		\
 			 _PAGE_SPECIAL | _PAGE_ACCESSED | _PAGE_DIRTY |	\
-			 _PAGE_SOFT_DIRTY | _PAGE_DEVMAP)
+			 _PAGE_SOFT_DIRTY | _PAGE_DEVMAP | _PAGE_ENC)
 #define _HPAGE_CHG_MASK (_PAGE_CHG_MASK | _PAGE_PSE)
-
-/* The ASID is the lower 12 bits of CR3 */
-#define X86_CR3_PCID_ASID_MASK  (_AC((1<<12)-1,UL))
-
-/* Mask for all the PCID-related bits in CR3: */
-#define X86_CR3_PCID_MASK       (X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_MASK)
-#define X86_CR3_PCID_ASID_KERN  (_AC(0x0,UL))
-
-#if defined(CONFIG_PAGE_TABLE_ISOLATION) && defined(CONFIG_X86_64)
-/* Let X86_CR3_PCID_ASID_USER be usable for the X86_CR3_PCID_NOFLUSH bit */
-#define X86_CR3_PCID_ASID_USER	(_AC(0x80,UL))
-
-#define X86_CR3_PCID_KERN_FLUSH		(X86_CR3_PCID_ASID_KERN)
-#define X86_CR3_PCID_USER_FLUSH		(X86_CR3_PCID_ASID_USER)
-#define X86_CR3_PCID_KERN_NOFLUSH	(X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_KERN)
-#define X86_CR3_PCID_USER_NOFLUSH	(X86_CR3_PCID_NOFLUSH | X86_CR3_PCID_ASID_USER)
-#else
-#define X86_CR3_PCID_ASID_USER  (_AC(0x0,UL))
-/*
- * PCIDs are unsupported on 32-bit and none of these bits can be
- * set in CR3:
- */
-#define X86_CR3_PCID_KERN_FLUSH		(0)
-#define X86_CR3_PCID_USER_FLUSH		(0)
-#define X86_CR3_PCID_KERN_NOFLUSH	(0)
-#define X86_CR3_PCID_USER_NOFLUSH	(0)
-#endif
 
 /*
  * The cache modes defined here are used to translate between pure SW usage
@@ -188,6 +148,7 @@ enum page_cache_mode {
 #endif
 
 #define _PAGE_CACHE_MASK	(_PAGE_PAT | _PAGE_PCD | _PAGE_PWT)
+#define _PAGE_LARGE_CACHE_MASK	(_PAGE_PWT | _PAGE_PCD | _PAGE_PAT_LARGE)
 #define _PAGE_NOCACHE		(cachemode2protval(_PAGE_CACHE_MODE_UC))
 #define _PAGE_CACHE_WP		(cachemode2protval(_PAGE_CACHE_MODE_WP))
 
@@ -227,10 +188,9 @@ enum page_cache_mode {
 
 #define _PAGE_ENC	(_AT(pteval_t, sme_me_mask))
 
-#define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER |	\
-			 _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_ENC)
 #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED |	\
 			 _PAGE_DIRTY | _PAGE_ENC)
+#define _PAGE_TABLE	(_KERNPG_TABLE | _PAGE_USER)
 
 #define __PAGE_KERNEL_ENC	(__PAGE_KERNEL | _PAGE_ENC)
 #define __PAGE_KERNEL_ENC_WP	(__PAGE_KERNEL_WP | _PAGE_ENC)
@@ -364,6 +324,11 @@ static inline pudval_t native_pud_val(pud_t pud)
 #else
 #include <asm-generic/pgtable-nopud.h>
 
+static inline pud_t native_make_pud(pudval_t val)
+{
+	return (pud_t) { .p4d.pgd = native_make_pgd(val) };
+}
+
 static inline pudval_t native_pud_val(pud_t pud)
 {
 	return native_pgd_val(pud.p4d.pgd);
@@ -384,6 +349,11 @@ static inline pmdval_t native_pmd_val(pmd_t pmd)
 }
 #else
 #include <asm-generic/pgtable-nopmd.h>
+
+static inline pmd_t native_make_pmd(pmdval_t val)
+{
+	return (pmd_t) { .pud.p4d.pgd = native_make_pgd(val) };
+}
 
 static inline pmdval_t native_pmd_val(pmd_t pmd)
 {

@@ -45,6 +45,7 @@
  *
  */
 
+#include <linux/bitfield.h>
 #include <linux/pci.h>
 #include <linux/io.h>
 #include <linux/delay.h>
@@ -269,12 +270,6 @@ static u32 extract_speed(u16 linkstat)
 	return speed;
 }
 
-/* return the PCIe link speed from the given link status */
-static u32 extract_width(u16 linkstat)
-{
-	return (linkstat & PCI_EXP_LNKSTA_NLW) >> PCI_EXP_LNKSTA_NLW_SHIFT;
-}
-
 /* read the link status and set dd->{lbus_width,lbus_speed,lbus_info} */
 static void update_lbus_info(struct hfi1_devdata *dd)
 {
@@ -287,7 +282,7 @@ static void update_lbus_info(struct hfi1_devdata *dd)
 		return;
 	}
 
-	dd->lbus_width = extract_width(linkstat);
+	dd->lbus_width = FIELD_GET(PCI_EXP_LNKSTA_NLW, linkstat);
 	dd->lbus_speed = extract_speed(linkstat);
 	snprintf(dd->lbus_info, sizeof(dd->lbus_info),
 		 "PCIe,%uMHz,x%u", dd->lbus_speed, dd->lbus_width);
@@ -410,15 +405,12 @@ int restore_pci_variables(struct hfi1_devdata *dd)
 	if (ret)
 		goto error;
 
-	ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_SPCIE1,
-				     dd->pci_lnkctl3);
-	if (ret)
-		goto error;
-
-	ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2, dd->pci_tph2);
-	if (ret)
-		goto error;
-
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					     dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
 	return 0;
 
 error:
@@ -468,15 +460,12 @@ int save_pci_variables(struct hfi1_devdata *dd)
 	if (ret)
 		goto error;
 
-	ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_SPCIE1,
-				    &dd->pci_lnkctl3);
-	if (ret)
-		goto error;
-
-	ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2, &dd->pci_tph2);
-	if (ret)
-		goto error;
-
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					    &dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
 	return 0;
 
 error:

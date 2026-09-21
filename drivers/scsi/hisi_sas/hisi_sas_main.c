@@ -186,12 +186,15 @@ void hisi_sas_slot_task_free(struct hisi_hba *hisi_hba, struct sas_task *task,
 		struct domain_device *device = task->dev;
 		struct hisi_sas_device *sas_dev = device->lldd_dev;
 
+		if (!task->lldd_task)
+			return;
+
+		task->lldd_task = NULL;
+
 		if (!sas_protocol_ata(task->task_proto))
 			if (slot->n_elem)
 				dma_unmap_sg(dev, task->scatter, slot->n_elem,
 					     task->data_dir);
-
-		task->lldd_task = NULL;
 
 		if (sas_dev)
 			atomic64_dec(&sas_dev->running_req);
@@ -200,8 +203,8 @@ void hisi_sas_slot_task_free(struct hisi_hba *hisi_hba, struct sas_task *task,
 	if (slot->buf)
 		dma_pool_free(hisi_hba->buffer_pool, slot->buf, slot->buf_dma);
 
-
 	list_del_init(&slot->entry);
+	slot->buf = NULL;
 	slot->task = NULL;
 	slot->port = NULL;
 	hisi_sas_slot_index_free(hisi_hba, slot->idx);
@@ -652,12 +655,13 @@ static void hisi_sas_port_notify_formed(struct asd_sas_phy *sas_phy)
 	struct hisi_hba *hisi_hba = sas_ha->lldd_ha;
 	struct hisi_sas_phy *phy = sas_phy->lldd_phy;
 	struct asd_sas_port *sas_port = sas_phy->port;
-	struct hisi_sas_port *port = to_hisi_sas_port(sas_port);
+	struct hisi_sas_port *port;
 	unsigned long flags;
 
 	if (!sas_port)
 		return;
 
+	port = to_hisi_sas_port(sas_port);
 	spin_lock_irqsave(&hisi_hba->lock, flags);
 	port->port_attached = 1;
 	port->id = phy->port_id;

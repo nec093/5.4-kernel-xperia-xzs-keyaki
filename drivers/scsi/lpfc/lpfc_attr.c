@@ -1178,7 +1178,7 @@ lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 		return -EACCES;
 
 	if ((phba->sli_rev < LPFC_SLI_REV4) ||
-	    (bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) !=
+	    (bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) <
 	     LPFC_SLI_INTF_IF_TYPE_2))
 		return -EPERM;
 
@@ -3147,7 +3147,8 @@ lpfc_txq_hw_show(struct device *dev, struct device_attribute *attr, char *buf)
 	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
 	struct lpfc_sli_ring *pring = lpfc_phba_elsring(phba);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", pring->txq_max);
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			pring ? pring->txq_max : 0);
 }
 
 static DEVICE_ATTR(txq_hw, S_IRUGO,
@@ -3160,7 +3161,8 @@ lpfc_txcmplq_hw_show(struct device *dev, struct device_attribute *attr,
 	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
 	struct lpfc_sli_ring *pring = lpfc_phba_elsring(phba);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", pring->txcmplq_max);
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			pring ? pring->txcmplq_max : 0);
 }
 
 static DEVICE_ATTR(txcmplq_hw, S_IRUGO,
@@ -4062,7 +4064,7 @@ lpfc_link_speed_store(struct device *dev, struct device_attribute *attr,
 	uint32_t prev_val, if_type;
 
 	if_type = bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf);
-	if (if_type == LPFC_SLI_INTF_IF_TYPE_2 &&
+	if (if_type >= LPFC_SLI_INTF_IF_TYPE_2 &&
 	    phba->hba_flag & HBA_FORCED_LINK_SPEED)
 		return -EPERM;
 

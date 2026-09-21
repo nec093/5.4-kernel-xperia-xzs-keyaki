@@ -616,6 +616,8 @@ int trace_print_context(struct trace_iterator *iter)
 			trace_seq_printf(s, "(%5d) ", tgid);
 	}
 
+	trace_seq_printf(s, "[%03d] ", iter->cpu);
+
 	if (tr->trace_flags & TRACE_ITER_IRQ_INFO)
 		trace_print_lat_fmt(s, entry);
 
@@ -1573,7 +1575,7 @@ static struct trace_event *events[] __initdata = {
 	NULL
 };
 
-__init static int init_events(void)
+__init int init_events(void)
 {
 	struct trace_event *event;
 	int i, ret;
@@ -1591,4 +1593,3 @@ __init static int init_events(void)
 
 	return 0;
 }
-early_initcall(init_events);

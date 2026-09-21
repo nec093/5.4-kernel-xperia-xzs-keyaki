@@ -63,7 +63,7 @@ struct rds_sock *rds_find_bound(__be32 addr, __be16 port)
 	rcu_read_lock();
 	rs = rhashtable_lookup(&bind_hash_table, &key, ht_parms);
 	if (rs && (sock_flag(rds_rs_to_sk(rs), SOCK_DEAD) ||
-		   !atomic_inc_not_zero(&rds_rs_to_sk(rs)->sk_refcnt)))
+		   !refcount_inc_not_zero(&rds_rs_to_sk(rs)->sk_refcnt)))
 		rs = NULL;
 
 	rcu_read_unlock();

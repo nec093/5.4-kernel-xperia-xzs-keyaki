@@ -248,7 +248,9 @@ static int __net_init ipmr_rules_init(struct net *net)
 	return 0;
 
 err2:
+	rtnl_lock();
 	ipmr_free_table(mrt);
+	rtnl_unlock();
 err1:
 	fib_rules_unregister(ops);
 	return err;
@@ -325,6 +327,7 @@ static const struct rhashtable_params ipmr_rht_params = {
 static struct mr_table *ipmr_new_table(struct net *net, u32 id)
 {
 	struct mr_table *mrt;
+	int err;
 
 	/* "pimreg%u" should not exceed 16 bytes (IFNAMSIZ) */
 	if (id != RT_TABLE_DEFAULT && id >= 1000000000)
@@ -340,7 +343,11 @@ static struct mr_table *ipmr_new_table(struct net *net, u32 id)
 	write_pnet(&mrt->net, net);
 	mrt->id = id;
 
-	rhltable_init(&mrt->mfc_hash, &ipmr_rht_params);
+	err = rhltable_init(&mrt->mfc_hash, &ipmr_rht_params);
+	if (err) {
+		kfree(mrt);
+		return ERR_PTR(err);
+	}
 	INIT_LIST_HEAD(&mrt->mfc_cache_list);
 	INIT_LIST_HEAD(&mrt->mfc_unres_queue);
 
@@ -2497,8 +2504,6 @@ static int ipmr_rtm_dumproute(struct sk_buff *skb, struct netlink_callback *cb)
 next_entry:
 			e++;
 		}
-		e = 0;
-		s_e = 0;
 
 		spin_lock_bh(&mfc_unres_lock);
 		list_for_each_entry(mfc, &mrt->mfc_unres_queue, list) {

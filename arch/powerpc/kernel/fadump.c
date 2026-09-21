@@ -118,12 +118,18 @@ int __init early_init_dt_scan_fw_dump(unsigned long node,
 
 /*
  * If fadump is registered, check if the memory provided
- * falls within boot memory area.
+ * falls within boot memory area and reserved memory area.
  */
-int is_fadump_boot_memory_area(u64 addr, ulong size)
+int is_fadump_memory_area(u64 addr, ulong size)
 {
+	u64 d_start = fw_dump.reserve_dump_area_start;
+	u64 d_end = d_start + fw_dump.reserve_dump_area_size;
+
 	if (!fw_dump.dump_registered)
 		return 0;
+
+	if (((addr + size) > d_start) && (addr <= d_end))
+		return 1;
 
 	return (addr + size) > RMA_START && addr <= fw_dump.boot_memory_size;
 }
@@ -1520,25 +1526,6 @@ static void fadump_init_files(void)
 	return;
 }
 
-static int fadump_panic_event(struct notifier_block *this,
-			      unsigned long event, void *ptr)
-{
-	/*
-	 * If firmware-assisted dump has been registered then trigger
-	 * firmware-assisted dump and let firmware handle everything
-	 * else. If this returns, then fadump was not registered, so
-	 * go through the rest of the panic path.
-	 */
-	crash_fadump(NULL, ptr);
-
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block fadump_panic_block = {
-	.notifier_call = fadump_panic_event,
-	.priority = INT_MIN /* may not return; must be done last */
-};
-
 /*
  * Prepare for firmware-assisted dump.
  */
@@ -1570,9 +1557,6 @@ int __init setup_fadump(void)
 	else if (fw_dump.reserve_dump_area_size)
 		init_fadump_mem_struct(&fdm, fw_dump.reserve_dump_area_start);
 	fadump_init_files();
-
-	atomic_notifier_chain_register(&panic_notifier_list,
-					&fadump_panic_block);
 
 	return 1;
 }

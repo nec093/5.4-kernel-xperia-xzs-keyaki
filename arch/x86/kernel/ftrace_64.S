@@ -286,7 +286,6 @@ trace:
 	 * ip and parent ip are used and the list function is called when
 	 * function tracing is enabled.
 	 */
-
 	movq ftrace_trace_function, %r8
 	CALL_NOSPEC %r8
 	restore_mcount_regs

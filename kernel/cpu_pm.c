@@ -159,7 +159,7 @@ EXPORT_SYMBOL_GPL(cpu_pm_exit);
  */
 int cpu_cluster_pm_enter(unsigned long aff_level)
 {
-	int nr_calls;
+	int nr_calls = 0;
 	int ret = 0;
 
 	read_lock(&cpu_pm_notifier_lock);

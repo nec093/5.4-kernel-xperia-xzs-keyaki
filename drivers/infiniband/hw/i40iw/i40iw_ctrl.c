@@ -506,7 +506,7 @@ static enum i40iw_status_code i40iw_sc_cqp_create(struct i40iw_sc_cqp *cqp,
 
 	ret_code = i40iw_allocate_dma_mem(cqp->dev->hw,
 					  &cqp->sdbuf,
-					  128,
+					  I40IW_UPDATE_SD_BUF_SIZE * cqp->sq_size,
 					  I40IW_SD_BUF_ALIGNMENT);
 
 	if (ret_code)
@@ -589,14 +589,15 @@ void i40iw_sc_cqp_post_sq(struct i40iw_sc_cqp *cqp)
 }
 
 /**
- * i40iw_sc_cqp_get_next_send_wqe - get next wqe on cqp sq
- * @cqp: struct for cqp hw
- * @wqe_idx: we index of cqp ring
+ * i40iw_sc_cqp_get_next_send_wqe_idx - get next WQE on CQP SQ and pass back the index
+ * @cqp: pointer to CQP structure
+ * @scratch: private data for CQP WQE
+ * @wqe_idx: WQE index for next WQE on CQP SQ
  */
-u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
+static u64 *i40iw_sc_cqp_get_next_send_wqe_idx(struct i40iw_sc_cqp *cqp,
+					       u64 scratch, u32 *wqe_idx)
 {
 	u64 *wqe = NULL;
-	u32	wqe_idx;
 	enum i40iw_status_code ret_code;
 
 	if (I40IW_RING_FULL_ERR(cqp->sq_ring)) {
@@ -609,18 +610,30 @@ u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
 			    cqp->sq_ring.size);
 		return NULL;
 	}
-	I40IW_ATOMIC_RING_MOVE_HEAD(cqp->sq_ring, wqe_idx, ret_code);
+	I40IW_ATOMIC_RING_MOVE_HEAD(cqp->sq_ring, *wqe_idx, ret_code);
 	cqp->dev->cqp_cmd_stats[OP_REQUESTED_COMMANDS]++;
 	if (ret_code)
 		return NULL;
-	if (!wqe_idx)
+	if (!*wqe_idx)
 		cqp->polarity = !cqp->polarity;
 
-	wqe = cqp->sq_base[wqe_idx].elem;
-	cqp->scratch_array[wqe_idx] = scratch;
+	wqe = cqp->sq_base[*wqe_idx].elem;
+	cqp->scratch_array[*wqe_idx] = scratch;
 	I40IW_CQP_INIT_WQE(wqe);
 
 	return wqe;
+}
+
+/**
+ * i40iw_sc_cqp_get_next_send_wqe - get next wqe on cqp sq
+ * @cqp: struct for cqp hw
+ * @scratch: private data for CQP WQE
+ */
+u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
+{
+	u32 wqe_idx;
+
+	return i40iw_sc_cqp_get_next_send_wqe_idx(cqp, scratch, &wqe_idx);
 }
 
 /**
@@ -2840,6 +2853,9 @@ static enum i40iw_status_code i40iw_sc_alloc_stag(
 	u64 header;
 	enum i40iw_page_size page_size;
 
+	if (!info->total_len && !info->all_memory)
+		return -EINVAL;
+
 	page_size = (info->page_size == 0x200000) ? I40IW_PAGE_SIZE_2M : I40IW_PAGE_SIZE_4K;
 	cqp = dev->cqp;
 	wqe = i40iw_sc_cqp_get_next_send_wqe(cqp, scratch);
@@ -2897,6 +2913,9 @@ static enum i40iw_status_code i40iw_sc_mr_reg_non_shared(
 	bool remote_access;
 	u8 addr_type;
 	enum i40iw_page_size page_size;
+
+	if (!info->total_len && !info->all_memory)
+		return -EINVAL;
 
 	page_size = (info->page_size == 0x200000) ? I40IW_PAGE_SIZE_2M : I40IW_PAGE_SIZE_4K;
 	if (info->access_rights & (I40IW_ACCESS_FLAGS_REMOTEREAD_ONLY |
@@ -3534,8 +3553,10 @@ static enum i40iw_status_code cqp_sds_wqe_fill(struct i40iw_sc_cqp *cqp,
 	u64 *wqe;
 	int mem_entries, wqe_entries;
 	struct i40iw_dma_mem *sdbuf = &cqp->sdbuf;
+	u64 offset;
+	u32 wqe_idx;
 
-	wqe = i40iw_sc_cqp_get_next_send_wqe(cqp, scratch);
+	wqe = i40iw_sc_cqp_get_next_send_wqe_idx(cqp, scratch, &wqe_idx);
 	if (!wqe)
 		return I40IW_ERR_RING_FULL;
 
@@ -3548,8 +3569,10 @@ static enum i40iw_status_code cqp_sds_wqe_fill(struct i40iw_sc_cqp *cqp,
 		 LS_64(mem_entries, I40IW_CQPSQ_UPESD_ENTRY_COUNT);
 
 	if (mem_entries) {
-		memcpy(sdbuf->va, &info->entry[3], (mem_entries << 4));
-		data = sdbuf->pa;
+		offset = wqe_idx * I40IW_UPDATE_SD_BUF_SIZE;
+		memcpy((char *)sdbuf->va + offset, &info->entry[3],
+		       mem_entries << 4);
+		data = (u64)sdbuf->pa + offset;
 	} else {
 		data = 0;
 	}

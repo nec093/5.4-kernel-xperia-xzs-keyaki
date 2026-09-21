@@ -144,7 +144,8 @@ static int map_tboot_page(unsigned long vaddr, unsigned long pfn,
 	 * name of making them unusable for userspace.  To execute
 	 * code at such a low address, the poison must be cleared.
 	 *
-	 * Note: 'pgd' actually gets set in pud_alloc().
+	 * Note: 'pgd' actually gets set in p4d_alloc() _or_
+	 * pud_alloc() depending on 4/5-level paging.
 	 */
 	pgd->pgd &= ~_PAGE_NX;
 

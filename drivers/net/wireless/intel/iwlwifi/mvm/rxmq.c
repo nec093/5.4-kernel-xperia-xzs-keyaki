@@ -141,9 +141,9 @@ static inline int iwl_mvm_check_pn(struct iwl_mvm *mvm, struct sk_buff *skb,
 }
 
 /* iwl_mvm_create_skb Adds the rxb to a new skb */
-static void iwl_mvm_create_skb(struct sk_buff *skb, struct ieee80211_hdr *hdr,
-			       u16 len, u8 crypt_len,
-			       struct iwl_rx_cmd_buffer *rxb)
+static int iwl_mvm_create_skb(struct iwl_mvm *mvm, struct sk_buff *skb,
+			      struct ieee80211_hdr *hdr, u16 len, u8 crypt_len,
+			      struct iwl_rx_cmd_buffer *rxb)
 {
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_rx_mpdu_desc *desc = (void *)pkt->data;
@@ -184,6 +184,20 @@ static void iwl_mvm_create_skb(struct sk_buff *skb, struct ieee80211_hdr *hdr,
 	 * present before copying packet data.
 	 */
 	hdrlen += crypt_len;
+
+	if (WARN_ONCE(headlen < hdrlen,
+		      "invalid packet lengths (hdrlen=%d, len=%d, crypt_len=%d)\n",
+		      hdrlen, len, crypt_len)) {
+		/*
+		 * We warn and trace because we want to be able to see
+		 * it in trace-cmd as well.
+		 */
+		IWL_DEBUG_RX(mvm,
+			     "invalid packet lengths (hdrlen=%d, len=%d, crypt_len=%d)\n",
+			     hdrlen, len, crypt_len);
+		return -EINVAL;
+	}
+
 	skb_put_data(skb, hdr, hdrlen);
 	skb_put_data(skb, (u8 *)hdr + hdrlen + pad_len, headlen - hdrlen);
 
@@ -196,6 +210,8 @@ static void iwl_mvm_create_skb(struct sk_buff *skb, struct ieee80211_hdr *hdr,
 		skb_add_rx_frag(skb, 0, rxb_steal_page(rxb), offset,
 				fraglen, rxb->truesize);
 	}
+
+	return 0;
 }
 
 /* iwl_mvm_pass_packet_to_mac80211 - passes the packet for mac80211 */
@@ -234,8 +250,8 @@ static void iwl_mvm_get_signal_strength(struct iwl_mvm *mvm,
 
 static int iwl_mvm_rx_crypto(struct iwl_mvm *mvm, struct ieee80211_hdr *hdr,
 			     struct ieee80211_rx_status *stats,
-			     struct iwl_rx_mpdu_desc *desc, int queue,
-			     u8 *crypt_len)
+			     struct iwl_rx_mpdu_desc *desc, u32 pkt_flags,
+			     int queue, u8 *crypt_len)
 {
 	u16 status = le16_to_cpu(desc->status);
 
@@ -255,6 +271,8 @@ static int iwl_mvm_rx_crypto(struct iwl_mvm *mvm, struct ieee80211_hdr *hdr,
 			return -1;
 
 		stats->flag |= RX_FLAG_DECRYPTED;
+		if (pkt_flags & FH_RSCSR_RADA_EN)
+			stats->flag |= RX_FLAG_MIC_STRIPPED;
 		*crypt_len = IEEE80211_CCMP_HDR_LEN;
 		return 0;
 	case IWL_RX_MPDU_STATUS_SEC_TKIP:
@@ -272,6 +290,10 @@ static int iwl_mvm_rx_crypto(struct iwl_mvm *mvm, struct ieee80211_hdr *hdr,
 		if ((status & IWL_RX_MPDU_STATUS_SEC_MASK) ==
 				IWL_RX_MPDU_STATUS_SEC_WEP)
 			*crypt_len = IEEE80211_WEP_IV_LEN;
+
+		if (pkt_flags & FH_RSCSR_RADA_EN)
+			stats->flag |= RX_FLAG_ICV_STRIPPED;
+
 		return 0;
 	case IWL_RX_MPDU_STATUS_SEC_EXT_ENC:
 		if (!(status & IWL_RX_MPDU_STATUS_MIC_OK))
@@ -811,7 +833,9 @@ void iwl_mvm_rx_mpdu_mq(struct iwl_mvm *mvm, struct napi_struct *napi,
 
 	rx_status = IEEE80211_SKB_RXCB(skb);
 
-	if (iwl_mvm_rx_crypto(mvm, hdr, rx_status, desc, queue, &crypt_len)) {
+	if (iwl_mvm_rx_crypto(mvm, hdr, rx_status, desc,
+			      le32_to_cpu(pkt->len_n_flags), queue,
+			      &crypt_len)) {
 		kfree_skb(skb);
 		return;
 	}
@@ -973,7 +997,9 @@ void iwl_mvm_rx_mpdu_mq(struct iwl_mvm *mvm, struct napi_struct *napi,
 		rx_status->bw = RATE_INFO_BW_160;
 		break;
 	}
-	if (rate_n_flags & RATE_MCS_SGI_MSK)
+
+	if (!(rate_n_flags & RATE_MCS_CCK_MSK) &&
+	    rate_n_flags & RATE_MCS_SGI_MSK)
 		rx_status->enc_flags |= RX_ENC_FLAG_SHORT_GI;
 	if (rate_n_flags & RATE_HT_MCS_GF_MSK)
 		rx_status->enc_flags |= RX_ENC_FLAG_HT_GF;
@@ -1023,7 +1049,11 @@ void iwl_mvm_rx_mpdu_mq(struct iwl_mvm *mvm, struct napi_struct *napi,
 			rx_status->boottime_ns = ktime_get_boot_ns();
 	}
 
-	iwl_mvm_create_skb(skb, hdr, len, crypt_len, rxb);
+	if (iwl_mvm_create_skb(mvm, skb, hdr, len, crypt_len, rxb)) {
+		kfree_skb(skb);
+		goto out;
+	}
+
 	if (!iwl_mvm_reorder(mvm, napi, queue, sta, skb, desc))
 		iwl_mvm_pass_packet_to_mac80211(mvm, napi, skb, queue, sta);
 out:

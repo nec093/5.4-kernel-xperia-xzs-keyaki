@@ -153,8 +153,8 @@ struct rhashtable_params {
  * struct rhashtable - Hash table handle
  * @tbl: Bucket table
  * @key_len: Key length for hashfn
- * @p: Configuration parameters
  * @max_elems: Maximum number of elements in table
+ * @p: Configuration parameters
  * @rhlist: True if this is an rhltable
  * @run_work: Deferred worker to expand/shrink asynchronously
  * @mutex: Mutex to protect current/future table swapping
@@ -164,8 +164,8 @@ struct rhashtable_params {
 struct rhashtable {
 	struct bucket_table __rcu	*tbl;
 	unsigned int			key_len;
-	struct rhashtable_params	p;
 	unsigned int			max_elems;
+	struct rhashtable_params	p;
 	bool				rhlist;
 	struct work_struct		run_work;
 	struct mutex                    mutex;

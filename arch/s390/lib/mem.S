@@ -17,7 +17,7 @@
 ENTRY(memmove)
 	ltgr	%r4,%r4
 	lgr	%r1,%r2
-	bzr	%r14
+	jz	.Lmemmove_exit
 	aghi	%r4,-1
 	clgr	%r2,%r3
 	jnh	.Lmemmove_forward
@@ -36,14 +36,15 @@ ENTRY(memmove)
 .Lmemmove_forward_remainder:
 	larl	%r5,.Lmemmove_mvc
 	ex	%r4,0(%r5)
-	br	%r14
+.Lmemmove_exit:
+	BR_EX	%r14
 .Lmemmove_reverse:
 	ic	%r0,0(%r4,%r3)
 	stc	%r0,0(%r4,%r1)
 	brctg	%r4,.Lmemmove_reverse
 	ic	%r0,0(%r4,%r3)
 	stc	%r0,0(%r4,%r1)
-	br	%r14
+	BR_EX	%r14
 .Lmemmove_mvc:
 	mvc	0(1,%r1),0(%r3)
 EXPORT_SYMBOL(memmove)

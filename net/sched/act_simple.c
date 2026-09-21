@@ -118,7 +118,7 @@ static int tcf_simp_init(struct net *net, struct nlattr *nla,
 		d = to_defact(*a);
 		ret = alloc_defdata(d, tb[TCA_DEF_DATA]);
 		if (ret < 0) {
-			tcf_idr_cleanup(*a, est);
+			tcf_idr_release(*a, bind);
 			return ret;
 		}
 		d->tcf_action = parm->action;
@@ -198,7 +198,7 @@ static __net_init int simp_init_net(struct net *net)
 {
 	struct tc_action_net *tn = net_generic(net, simp_net_id);
 
-	return tc_action_net_init(tn, &act_simp_ops);
+	return tc_action_net_init(net, tn, &act_simp_ops);
 }
 
 static void __net_exit simp_exit_net(struct net *net)

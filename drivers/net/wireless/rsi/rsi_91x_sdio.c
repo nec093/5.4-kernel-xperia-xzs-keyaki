@@ -634,11 +634,14 @@ static int rsi_sdio_master_reg_read(struct rsi_hw *adapter, u32 addr,
 				    u32 *read_buf, u16 size)
 {
 	u32 addr_on_bus, *data;
-	u32 align[2] = {};
 	u16 ms_addr;
 	int status;
 
-	data = PTR_ALIGN(&align[0], 8);
+	data = kzalloc(RSI_MASTER_REG_BUF_SIZE, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
+	data = PTR_ALIGN(data, 8);
 
 	ms_addr = (addr >> 16);
 	status = rsi_sdio_master_access_msword(adapter, ms_addr);
@@ -646,7 +649,7 @@ static int rsi_sdio_master_reg_read(struct rsi_hw *adapter, u32 addr,
 		rsi_dbg(ERR_ZONE,
 			"%s: Unable to set ms word to common reg\n",
 			__func__);
-		return status;
+		goto err;
 	}
 	addr &= 0xFFFF;
 
@@ -664,7 +667,7 @@ static int rsi_sdio_master_reg_read(struct rsi_hw *adapter, u32 addr,
 					 (u8 *)data, 4);
 	if (status < 0) {
 		rsi_dbg(ERR_ZONE, "%s: AHB register read failed\n", __func__);
-		return status;
+		goto err;
 	}
 	if (size == 2) {
 		if ((addr & 0x3) == 0)
@@ -686,17 +689,23 @@ static int rsi_sdio_master_reg_read(struct rsi_hw *adapter, u32 addr,
 		*read_buf = *data;
 	}
 
-	return 0;
+err:
+	kfree(data);
+	return status;
 }
 
 static int rsi_sdio_master_reg_write(struct rsi_hw *adapter,
 				     unsigned long addr,
 				     unsigned long data, u16 size)
 {
-	unsigned long data1[2], *data_aligned;
+	unsigned long *data_aligned;
 	int status;
 
-	data_aligned = PTR_ALIGN(&data1[0], 8);
+	data_aligned = kzalloc(RSI_MASTER_REG_BUF_SIZE, GFP_KERNEL);
+	if (!data_aligned)
+		return -ENOMEM;
+
+	data_aligned = PTR_ALIGN(data_aligned, 8);
 
 	if (size == 2) {
 		*data_aligned = ((data << 16) | (data & 0xFFFF));
@@ -715,6 +724,7 @@ static int rsi_sdio_master_reg_write(struct rsi_hw *adapter,
 		rsi_dbg(ERR_ZONE,
 			"%s: Unable to set ms word to common reg\n",
 			__func__);
+		kfree(data_aligned);
 		return -EIO;
 	}
 	addr = addr & 0xFFFF;
@@ -724,12 +734,12 @@ static int rsi_sdio_master_reg_write(struct rsi_hw *adapter,
 					(adapter,
 					 (addr | RSI_SD_REQUEST_MASTER),
 					 (u8 *)data_aligned, size);
-	if (status < 0) {
+	if (status < 0)
 		rsi_dbg(ERR_ZONE,
 			"%s: Unable to do AHB reg write\n", __func__);
-		return status;
-	}
-	return 0;
+
+	kfree(data_aligned);
+	return status;
 }
 
 /**
@@ -958,17 +968,21 @@ static void ulp_read_write(struct rsi_hw *adapter, u16 addr, u32 data,
 /*This function resets and re-initializes the chip.*/
 static void rsi_reset_chip(struct rsi_hw *adapter)
 {
-	__le32 data;
+	u8 *data;
 	u8 sdio_interrupt_status = 0;
 	u8 request = 1;
 	int ret;
+
+	data = kzalloc(sizeof(u32), GFP_KERNEL);
+	if (!data)
+		return;
 
 	rsi_dbg(INFO_ZONE, "Writing disable to wakeup register\n");
 	ret =  rsi_sdio_write_register(adapter, 0, SDIO_WAKEUP_REG, &request);
 	if (ret < 0) {
 		rsi_dbg(ERR_ZONE,
 			"%s: Failed to write SDIO wakeup register\n", __func__);
-		return;
+		goto err;
 	}
 	msleep(20);
 	ret =  rsi_sdio_read_register(adapter, RSI_FN1_INT_REGISTER,
@@ -976,7 +990,7 @@ static void rsi_reset_chip(struct rsi_hw *adapter)
 	if (ret < 0) {
 		rsi_dbg(ERR_ZONE, "%s: Failed to Read Intr Status Register\n",
 			__func__);
-		return;
+		goto err;
 	}
 	rsi_dbg(INFO_ZONE, "%s: Intr Status Register value = %d\n",
 		__func__, sdio_interrupt_status);
@@ -986,17 +1000,17 @@ static void rsi_reset_chip(struct rsi_hw *adapter)
 		rsi_dbg(ERR_ZONE,
 			"%s: Unable to set ms word to common reg\n",
 			__func__);
-		return;
+		goto err;
 	}
 
-	data = TA_HOLD_THREAD_VALUE;
+	put_unaligned_le32(TA_HOLD_THREAD_VALUE, data);
 	if (rsi_sdio_write_register_multiple(adapter, TA_HOLD_THREAD_REG |
 					     RSI_SD_REQUEST_MASTER,
-					     (u8 *)&data, 4)) {
+					     data, 4)) {
 		rsi_dbg(ERR_ZONE,
 			"%s: Unable to hold Thread-Arch processor threads\n",
 			__func__);
-		return;
+		goto err;
 	}
 
 	/* This msleep will ensure Thread-Arch processor to go to hold
@@ -1017,6 +1031,9 @@ static void rsi_reset_chip(struct rsi_hw *adapter)
 	 * read write operations to complete for chip reset.
 	 */
 	msleep(500);
+err:
+	kfree(data);
+	return;
 }
 
 /**

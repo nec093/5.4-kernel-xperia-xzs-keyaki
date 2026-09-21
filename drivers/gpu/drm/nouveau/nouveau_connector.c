@@ -251,7 +251,7 @@ nouveau_conn_reset(struct drm_connector *connector)
 		return;
 
 	if (connector->state)
-		__drm_atomic_helper_connector_destroy_state(connector->state);
+		nouveau_conn_atomic_destroy_state(connector, connector->state);
 	__drm_atomic_helper_connector_reset(connector, &asyc->state);
 	asyc->dither.mode = DITHERING_MODE_AUTO;
 	asyc->dither.depth = DITHERING_DEPTH_AUTO;
@@ -580,8 +580,10 @@ nouveau_connector_detect(struct drm_connector *connector, bool force)
 		pm_runtime_get_noresume(dev->dev);
 	} else {
 		ret = pm_runtime_get_sync(dev->dev);
-		if (ret < 0 && ret != -EACCES)
+		if (ret < 0 && ret != -EACCES) {
+			pm_runtime_put_autosuspend(dev->dev);
 			return conn_status;
+		}
 	}
 
 	nv_encoder = nouveau_connector_ddc_detect(connector);
@@ -964,7 +966,7 @@ nouveau_connector_get_modes(struct drm_connector *connector)
 	 * "native" mode as some VBIOS tables require us to use the
 	 * pixel clock as part of the lookup...
 	 */
-	if (connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
+	if (connector->connector_type == DRM_MODE_CONNECTOR_LVDS && nv_connector->native_mode)
 		nouveau_connector_detect_depth(connector);
 
 	if (nv_encoder->dcb->type == DCB_OUTPUT_TV)
@@ -1122,6 +1124,26 @@ nouveau_connector_hotplug(struct nvif_notify *notify)
 	const struct nvif_notify_conn_rep_v0 *rep = notify->data;
 	const char *name = connector->name;
 	struct nouveau_encoder *nv_encoder;
+	int ret;
+
+	ret = pm_runtime_get(drm->dev->dev);
+	if (ret == 0) {
+		/* We can't block here if there's a pending PM request
+		 * running, as we'll deadlock nouveau_display_fini() when it
+		 * calls nvif_put() on our nvif_notify struct. So, simply
+		 * defer the hotplug event until the device finishes resuming
+		 */
+		NV_DEBUG(drm, "Deferring HPD on %s until runtime resume\n",
+			 name);
+		schedule_work(&drm->hpd_work);
+
+		pm_runtime_put_noidle(drm->dev->dev);
+		return NVIF_NOTIFY_KEEP;
+	} else if (ret != 1 && ret != -EACCES) {
+		NV_WARN(drm, "HPD on %s dropped due to RPM failure: %d\n",
+			name, ret);
+		return NVIF_NOTIFY_DROP;
+	}
 
 	if (rep->mask & NVIF_NOTIFY_CONN_V0_IRQ) {
 		NV_DEBUG(drm, "service %s\n", name);
@@ -1139,6 +1161,8 @@ nouveau_connector_hotplug(struct nvif_notify *notify)
 		drm_helper_hpd_irq_event(connector->dev);
 	}
 
+	pm_runtime_mark_last_busy(drm->dev->dev);
+	pm_runtime_put_autosuspend(drm->dev->dev);
 	return NVIF_NOTIFY_KEEP;
 }
 
@@ -1210,14 +1234,19 @@ nouveau_connector_create(struct drm_device *dev, int index)
 	struct nouveau_display *disp = nouveau_display(dev);
 	struct nouveau_connector *nv_connector = NULL;
 	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
 	int type, ret = 0;
 	bool dummy;
 
-	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+	drm_connector_list_iter_begin(dev, &conn_iter);
+	nouveau_for_each_non_mst_connector_iter(connector, &conn_iter) {
 		nv_connector = nouveau_connector(connector);
-		if (nv_connector->index == index)
+		if (nv_connector->index == index) {
+			drm_connector_list_iter_end(&conn_iter);
 			return connector;
+		}
 	}
+	drm_connector_list_iter_end(&conn_iter);
 
 	nv_connector = kzalloc(sizeof(*nv_connector), GFP_KERNEL);
 	if (!nv_connector)

@@ -358,7 +358,7 @@ void batadv_debugfs_rename_hardif(struct batadv_hard_iface *hard_iface)
 }
 
 /**
- * batadv_debugfs_del_hardif - delete the base directory for a hard interface
+ * batadv_debugfs_del_hardif() - delete the base directory for a hard interface
  *  in debugfs.
  * @hard_iface: hard interface which is deleted.
  */
@@ -441,6 +441,10 @@ void batadv_debugfs_rename_meshif(struct net_device *dev)
 		pr_err("Can't rename debugfs dir to %s\n", name);
 }
 
+/**
+ * batadv_debugfs_del_meshif() - Remove interface dependent debugfs entries
+ * @dev: netdev struct of the soft interface
+ */
 void batadv_debugfs_del_meshif(struct net_device *dev)
 {
 	struct batadv_priv *bat_priv = netdev_priv(dev);

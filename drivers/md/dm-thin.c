@@ -195,7 +195,7 @@ static void throttle_unlock(struct throttle *t)
 struct dm_thin_new_mapping;
 
 /*
- * The pool runs in 4 modes.  Ordered in degraded order for comparisons.
+ * The pool runs in various modes.  Ordered in degraded order for comparisons.
  */
 enum pool_mode {
 	PM_WRITE,		/* metadata may be changed */
@@ -282,8 +282,37 @@ struct pool {
 	struct dm_bio_prison_cell **cell_sort_array;
 };
 
-static enum pool_mode get_pool_mode(struct pool *pool);
 static void metadata_operation_failed(struct pool *pool, const char *op, int r);
+
+static enum pool_mode get_pool_mode(struct pool *pool)
+{
+	return pool->pf.mode;
+}
+
+static void notify_of_pool_mode_change(struct pool *pool)
+{
+	const char *descs[] = {
+		"write",
+		"out-of-data-space",
+		"read-only",
+		"read-only",
+		"fail"
+	};
+	const char *extra_desc = NULL;
+	enum pool_mode mode = get_pool_mode(pool);
+
+	if (mode == PM_OUT_OF_DATA_SPACE) {
+		if (!pool->pf.error_if_no_space)
+			extra_desc = " (queue IO)";
+		else
+			extra_desc = " (error IO)";
+	}
+
+	dm_table_event(pool->ti->table);
+	DMINFO("%s: switching pool to %s%s mode",
+	       dm_device_name(pool->pool_md),
+	       descs[(int)mode], extra_desc ? : "");
+}
 
 /*
  * Target context for a pool.
@@ -2204,6 +2233,7 @@ static void process_thin_deferred_bios(struct thin_c *tc)
 			throttle_work_update(&pool->throttle);
 			dm_pool_issue_prefetches(pool->pmd);
 		}
+		cond_resched();
 	}
 	blk_finish_plug(&plug);
 }
@@ -2287,6 +2317,7 @@ static void process_thin_deferred_cells(struct thin_c *tc)
 			else
 				pool->process_cell(tc, cell);
 		}
+		cond_resched();
 	} while (!list_empty(&cells));
 }
 
@@ -2406,8 +2437,6 @@ static void do_waker(struct work_struct *ws)
 	queue_delayed_work(pool->wq, &pool->waker, COMMIT_PERIOD);
 }
 
-static void notify_of_pool_mode_change_to_oods(struct pool *pool);
-
 /*
  * We're holding onto IO to allow userland time to react.  After the
  * timeout either the pool will have been resized (and thus back in
@@ -2420,7 +2449,7 @@ static void do_no_space_timeout(struct work_struct *ws)
 
 	if (get_pool_mode(pool) == PM_OUT_OF_DATA_SPACE && !pool->pf.error_if_no_space) {
 		pool->pf.error_if_no_space = true;
-		notify_of_pool_mode_change_to_oods(pool);
+		notify_of_pool_mode_change(pool);
 		error_retry_list_with_code(pool, BLK_STS_NOSPC);
 	}
 }
@@ -2488,26 +2517,6 @@ static void noflush_work(struct thin_c *tc, void (*fn)(struct work_struct *))
 
 /*----------------------------------------------------------------*/
 
-static enum pool_mode get_pool_mode(struct pool *pool)
-{
-	return pool->pf.mode;
-}
-
-static void notify_of_pool_mode_change(struct pool *pool, const char *new_mode)
-{
-	dm_table_event(pool->ti->table);
-	DMINFO("%s: switching pool to %s mode",
-	       dm_device_name(pool->pool_md), new_mode);
-}
-
-static void notify_of_pool_mode_change_to_oods(struct pool *pool)
-{
-	if (!pool->pf.error_if_no_space)
-		notify_of_pool_mode_change(pool, "out-of-data-space (queue IO)");
-	else
-		notify_of_pool_mode_change(pool, "out-of-data-space (error IO)");
-}
-
 static bool passdown_enabled(struct pool_c *pt)
 {
 	return pt->adjusted_pf.discard_passdown;
@@ -2556,8 +2565,6 @@ static void set_pool_mode(struct pool *pool, enum pool_mode new_mode)
 
 	switch (new_mode) {
 	case PM_FAIL:
-		if (old_mode != new_mode)
-			notify_of_pool_mode_change(pool, "failure");
 		dm_pool_metadata_read_only(pool->pmd);
 		pool->process_bio = process_bio_fail;
 		pool->process_discard = process_bio_fail;
@@ -2593,8 +2600,6 @@ static void set_pool_mode(struct pool *pool, enum pool_mode new_mode)
 		 * alarming rate.  Adjust your low water mark if you're
 		 * frequently seeing this mode.
 		 */
-		if (old_mode != new_mode)
-			notify_of_pool_mode_change_to_oods(pool);
 		pool->out_of_data_space = true;
 		pool->process_bio = process_bio_read_only;
 		pool->process_discard = process_discard_bio;
@@ -2607,8 +2612,6 @@ static void set_pool_mode(struct pool *pool, enum pool_mode new_mode)
 		break;
 
 	case PM_WRITE:
-		if (old_mode != new_mode)
-			notify_of_pool_mode_change(pool, "write");
 		if (old_mode == PM_OUT_OF_DATA_SPACE)
 			cancel_delayed_work_sync(&pool->no_space_timeout);
 		pool->out_of_data_space = false;
@@ -2628,6 +2631,9 @@ static void set_pool_mode(struct pool *pool, enum pool_mode new_mode)
 	 * doesn't cause an unexpected mode transition on resume.
 	 */
 	pt->adjusted_pf.mode = new_mode;
+
+	if (old_mode != new_mode)
+		notify_of_pool_mode_change(pool);
 }
 
 static void abort_transaction(struct pool *pool)
@@ -2930,6 +2936,8 @@ static void __pool_destroy(struct pool *pool)
 	dm_bio_prison_destroy(pool->prison);
 	dm_kcopyd_client_destroy(pool->copier);
 
+	cancel_delayed_work_sync(&pool->waker);
+	cancel_delayed_work_sync(&pool->no_space_timeout);
 	if (pool->wq)
 		destroy_workqueue(pool->wq);
 
@@ -4479,30 +4487,28 @@ static struct target_type thin_target = {
 
 static int __init dm_thin_init(void)
 {
-	int r;
+	int r = -ENOMEM;
 
 	pool_table_init();
 
+	_new_mapping_cache = KMEM_CACHE(dm_thin_new_mapping, 0);
+	if (!_new_mapping_cache)
+		return r;
+
 	r = dm_register_target(&thin_target);
 	if (r)
-		return r;
+		goto bad_new_mapping_cache;
 
 	r = dm_register_target(&pool_target);
 	if (r)
-		goto bad_pool_target;
-
-	r = -ENOMEM;
-
-	_new_mapping_cache = KMEM_CACHE(dm_thin_new_mapping, 0);
-	if (!_new_mapping_cache)
-		goto bad_new_mapping_cache;
+		goto bad_thin_target;
 
 	return 0;
 
-bad_new_mapping_cache:
-	dm_unregister_target(&pool_target);
-bad_pool_target:
+bad_thin_target:
 	dm_unregister_target(&thin_target);
+bad_new_mapping_cache:
+	kmem_cache_destroy(_new_mapping_cache);
 
 	return r;
 }

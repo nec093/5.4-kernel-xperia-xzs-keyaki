@@ -32,8 +32,16 @@ static int process_sdio_pending_irqs(struct mmc_host *host)
 {
 	struct mmc_card *card = host->card;
 	int i, ret, count;
+	bool sdio_irq_pending = host->sdio_irq_pending;
 	unsigned char pending;
 	struct sdio_func *func;
+
+	/* Don't process SDIO IRQs if the card is suspended. */
+	if (mmc_card_suspended(card))
+		return 0;
+
+	/* Clear the flag to indicate that we have processed the IRQ. */
+	host->sdio_irq_pending = false;
 
 	/*
 	 * Optimization, if there is only 1 function interrupt registered
@@ -41,7 +49,7 @@ static int process_sdio_pending_irqs(struct mmc_host *host)
 	 * Otherwise do the full probe.
 	 */
 	func = card->sdio_single_irq;
-	if (func && host->sdio_irq_pending) {
+	if (func && sdio_irq_pending) {
 		func->irq_handler(func);
 		return 1;
 	}
@@ -100,6 +108,21 @@ void sdio_run_irqs(struct mmc_host *host)
 }
 EXPORT_SYMBOL_GPL(sdio_run_irqs);
 
+void sdio_irq_work(struct work_struct *work)
+{
+	struct mmc_host *host =
+		container_of(work, struct mmc_host, sdio_irq_work.work);
+
+	sdio_run_irqs(host);
+}
+
+void sdio_signal_irq(struct mmc_host *host)
+{
+	host->sdio_irq_pending = true;
+	queue_delayed_work(system_wq, &host->sdio_irq_work, 0);
+}
+EXPORT_SYMBOL_GPL(sdio_signal_irq);
+
 static int sdio_irq_thread(void *_host)
 {
 	struct mmc_host *host = _host;
@@ -152,7 +175,6 @@ static int sdio_irq_thread(void *_host)
 			ws = true;
 		}
 		ret = process_sdio_pending_irqs(host);
-		host->sdio_irq_pending = false;
 		mmc_release_host(host);
 
 		/*

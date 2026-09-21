@@ -146,7 +146,8 @@ static inline int epilogue_offset(const struct jit_ctx *ctx)
 /* Stack must be multiples of 16B */
 #define STACK_ALIGN(sz) (((sz) + 15) & ~15)
 
-#define PROLOGUE_OFFSET 8
+/* Tail call offset to jump into */
+#define PROLOGUE_OFFSET 7
 
 static int build_prologue(struct jit_ctx *ctx)
 {
@@ -198,19 +199,19 @@ static int build_prologue(struct jit_ctx *ctx)
 	/* Initialize tail_call_cnt */
 	emit(A64_MOVZ(1, tcc, 0, 0), ctx);
 
-	/* 4 byte extra for skb_copy_bits buffer */
-	ctx->stack_size = prog->aux->stack_depth + 4;
-	ctx->stack_size = STACK_ALIGN(ctx->stack_size);
-
-	/* Set up function call stack */
-	emit(A64_SUB_I(1, A64_SP, A64_SP, ctx->stack_size), ctx);
-
 	cur_offset = ctx->idx - idx0;
 	if (cur_offset != PROLOGUE_OFFSET) {
 		pr_err_once("PROLOGUE_OFFSET = %d, expected %d!\n",
 			    cur_offset, PROLOGUE_OFFSET);
 		return -1;
 	}
+
+	/* 4 byte extra for skb_copy_bits buffer */
+	ctx->stack_size = prog->aux->stack_depth + 4;
+	ctx->stack_size = STACK_ALIGN(ctx->stack_size);
+
+	/* Set up function call stack */
+	emit(A64_SUB_I(1, A64_SP, A64_SP, ctx->stack_size), ctx);
 	return 0;
 }
 
@@ -259,11 +260,12 @@ static int emit_bpf_tail_call(struct jit_ctx *ctx)
 	emit(A64_LDR64(prg, tmp, prg), ctx);
 	emit(A64_CBZ(1, prg, jmp_offset), ctx);
 
-	/* goto *(prog->bpf_func + prologue_size); */
+	/* goto *(prog->bpf_func + prologue_offset); */
 	off = offsetof(struct bpf_prog, bpf_func);
 	emit_a64_mov_i64(tmp, off, ctx);
 	emit(A64_LDR64(tmp, prg, tmp), ctx);
 	emit(A64_ADD_I(1, tmp, tmp, sizeof(u32) * PROLOGUE_OFFSET), ctx);
+	emit(A64_ADD_I(1, A64_SP, A64_SP, ctx->stack_size), ctx);
 	emit(A64_BR(tmp), ctx);
 
 	/* out: */
@@ -326,7 +328,7 @@ static int build_insn(const struct bpf_insn *insn, struct jit_ctx *ctx)
 	const int i = insn - ctx->prog->insnsi;
 	const bool is64 = BPF_CLASS(code) == BPF_ALU64;
 	const bool isdw = BPF_SIZE(code) == BPF_DW;
-	u8 jmp_cond;
+	u8 jmp_cond, reg;
 	s32 jmp_offset;
 
 #define check_imm(bits, imm) do {				\
@@ -702,19 +704,28 @@ emit_cond_jmp:
 			break;
 		}
 		break;
+
 	/* STX XADD: lock *(u32 *)(dst + off) += src */
 	case BPF_STX | BPF_XADD | BPF_W:
 	/* STX XADD: lock *(u64 *)(dst + off) += src */
 	case BPF_STX | BPF_XADD | BPF_DW:
-		emit_a64_mov_i(1, tmp, off, ctx);
-		emit(A64_ADD(1, tmp, tmp, dst), ctx);
-		emit(A64_PRFM(tmp, PST, L1, STRM), ctx);
-		emit(A64_LDXR(isdw, tmp2, tmp), ctx);
-		emit(A64_ADD(isdw, tmp2, tmp2, src), ctx);
-		emit(A64_STXR(isdw, tmp2, tmp, tmp3), ctx);
-		jmp_offset = -3;
-		check_imm19(jmp_offset);
-		emit(A64_CBNZ(0, tmp3, jmp_offset), ctx);
+		if (!off) {
+			reg = dst;
+		} else {
+			emit_a64_mov_i(1, tmp, off, ctx);
+			emit(A64_ADD(1, tmp, tmp, dst), ctx);
+			reg = tmp;
+		}
+		if (cpus_have_cap(ARM64_HAS_LSE_ATOMICS)) {
+			emit(A64_STADD(isdw, reg, src), ctx);
+		} else {
+			emit(A64_LDXR(isdw, tmp2, reg), ctx);
+			emit(A64_ADD(isdw, tmp2, tmp2, src), ctx);
+			emit(A64_STXR(isdw, tmp2, reg, tmp3), ctx);
+			jmp_offset = -3;
+			check_imm19(jmp_offset);
+			emit(A64_CBNZ(0, tmp3, jmp_offset), ctx);
+		}
 		break;
 
 	/* R0 = ntohx(*(size *)(((struct sk_buff *)R6)->data + imm)) */

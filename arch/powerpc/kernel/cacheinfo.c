@@ -870,6 +870,8 @@ void cacheinfo_teardown(void)
 {
 	unsigned int cpu;
 
+	lockdep_assert_cpus_held();
+
 	for_each_online_cpu(cpu)
 		cacheinfo_cpu_offline(cpu);
 }
@@ -877,6 +879,8 @@ void cacheinfo_teardown(void)
 void cacheinfo_rebuild(void)
 {
 	unsigned int cpu;
+
+	lockdep_assert_cpus_held();
 
 	for_each_online_cpu(cpu)
 		cacheinfo_cpu_online(cpu);

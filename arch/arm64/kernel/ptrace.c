@@ -676,6 +676,9 @@ static int fpr_set(struct task_struct *target, const struct user_regset *regset,
 	if (!system_supports_fpsimd())
 		return -EINVAL;
 
+	if (!system_supports_fpsimd())
+		return -EINVAL;
+
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &newstate, 0, -1);
 	if (ret)
 		return ret;

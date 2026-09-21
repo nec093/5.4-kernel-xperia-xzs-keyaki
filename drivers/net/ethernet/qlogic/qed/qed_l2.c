@@ -115,8 +115,7 @@ int qed_l2_alloc(struct qed_hwfn *p_hwfn)
 
 void qed_l2_setup(struct qed_hwfn *p_hwfn)
 {
-	if (p_hwfn->hw_info.personality != QED_PCI_ETH &&
-	    p_hwfn->hw_info.personality != QED_PCI_ETH_ROCE)
+	if (!QED_IS_L2_PERSONALITY(p_hwfn))
 		return;
 
 	mutex_init(&p_hwfn->p_l2_info->lock);
@@ -126,8 +125,7 @@ void qed_l2_free(struct qed_hwfn *p_hwfn)
 {
 	u32 i;
 
-	if (p_hwfn->hw_info.personality != QED_PCI_ETH &&
-	    p_hwfn->hw_info.personality != QED_PCI_ETH_ROCE)
+	if (!QED_IS_L2_PERSONALITY(p_hwfn))
 		return;
 
 	if (!p_hwfn->p_l2_info)
@@ -609,6 +607,10 @@ qed_sp_update_accept_mode(struct qed_hwfn *p_hwfn,
 			  (!!(accept_filter & QED_ACCEPT_MCAST_MATCHED) &&
 			   !!(accept_filter & QED_ACCEPT_MCAST_UNMATCHED)));
 
+		SET_FIELD(state, ETH_VPORT_TX_MODE_UCAST_ACCEPT_ALL,
+			  (!!(accept_filter & QED_ACCEPT_UCAST_MATCHED) &&
+			   !!(accept_filter & QED_ACCEPT_UCAST_UNMATCHED)));
+
 		SET_FIELD(state, ETH_VPORT_TX_MODE_BCAST_ACCEPT_ALL,
 			  !!(accept_filter & QED_ACCEPT_BCAST));
 
@@ -743,6 +745,11 @@ int qed_sp_vport_update(struct qed_hwfn *p_hwfn,
 		/* Return spq entry which is taken in qed_sp_init_request()*/
 		qed_spq_return_entry(p_hwfn, p_ent);
 		return rc;
+	}
+
+	if (p_params->update_ctl_frame_check) {
+		p_cmn->ctl_frame_mac_check_en = p_params->mac_chk_en;
+		p_cmn->ctl_frame_ethtype_check_en = p_params->ethtype_chk_en;
 	}
 
 	/* Update mcast bins for VFs, PF doesn't use this functionality */
@@ -2159,7 +2166,7 @@ static int qed_fill_eth_dev_info(struct qed_dev *cdev,
 			u16 num_queues = 0;
 
 			/* Since the feature controls only queue-zones,
-			 * make sure we have the contexts [rx, tx, xdp] to
+			 * make sure we have the contexts [rx, xdp, tcs] to
 			 * match.
 			 */
 			for_each_hwfn(cdev, i) {
@@ -2169,7 +2176,8 @@ static int qed_fill_eth_dev_info(struct qed_dev *cdev,
 				u16 cids;
 
 				cids = hwfn->pf_params.eth_pf_params.num_cons;
-				num_queues += min_t(u16, l2_queues, cids / 3);
+				cids /= (2 + info->num_tc);
+				num_queues += min_t(u16, l2_queues, cids);
 			}
 
 			/* queues might theoretically be >256, but interrupts'
@@ -2638,7 +2646,8 @@ static int qed_configure_filter_rx_mode(struct qed_dev *cdev,
 	if (type == QED_FILTER_RX_MODE_TYPE_PROMISC) {
 		accept_flags.rx_accept_filter |= QED_ACCEPT_UCAST_UNMATCHED |
 						 QED_ACCEPT_MCAST_UNMATCHED;
-		accept_flags.tx_accept_filter |= QED_ACCEPT_MCAST_UNMATCHED;
+		accept_flags.tx_accept_filter |= QED_ACCEPT_UCAST_UNMATCHED |
+						 QED_ACCEPT_MCAST_UNMATCHED;
 	} else if (type == QED_FILTER_RX_MODE_TYPE_MULTI_PROMISC) {
 		accept_flags.rx_accept_filter |= QED_ACCEPT_MCAST_UNMATCHED;
 		accept_flags.tx_accept_filter |= QED_ACCEPT_MCAST_UNMATCHED;

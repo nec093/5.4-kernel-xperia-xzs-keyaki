@@ -500,9 +500,7 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(child->thread.last_break,
-			 (unsigned long __user *) data);
-		return 0;
+		return put_user(child->thread.last_break, (unsigned long __user *)data);
 	case PTRACE_ENABLE_TE:
 		if (!MACHINE_HAS_TE)
 			return -EIO;
@@ -854,9 +852,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(child->thread.last_break,
-			 (unsigned int __user *) data);
-		return 0;
+		return put_user(child->thread.last_break, (unsigned int __user *)data);
 	}
 	return compat_ptrace_request(child, request, addr, data);
 }
@@ -1201,26 +1197,37 @@ static int s390_gs_cb_set(struct task_struct *target,
 			  unsigned int pos, unsigned int count,
 			  const void *kbuf, const void __user *ubuf)
 {
-	struct gs_cb *data = target->thread.gs_cb;
+	struct gs_cb gs_cb = { }, *data = NULL;
 	int rc;
 
 	if (!MACHINE_HAS_GS)
 		return -ENODEV;
-	if (!data) {
+	if (!target->thread.gs_cb) {
 		data = kzalloc(sizeof(*data), GFP_KERNEL);
 		if (!data)
 			return -ENOMEM;
-		data->gsd = 25;
-		target->thread.gs_cb = data;
-		if (target == current)
-			__ctl_set_bit(2, 4);
-	} else if (target == current) {
-		save_gs_cb(data);
 	}
+	if (!target->thread.gs_cb)
+		gs_cb.gsd = 25;
+	else if (target == current)
+		save_gs_cb(&gs_cb);
+	else
+		gs_cb = *target->thread.gs_cb;
 	rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
-				data, 0, sizeof(struct gs_cb));
-	if (target == current)
-		restore_gs_cb(data);
+				&gs_cb, 0, sizeof(gs_cb));
+	if (rc) {
+		kfree(data);
+		return -EFAULT;
+	}
+	preempt_disable();
+	if (!target->thread.gs_cb)
+		target->thread.gs_cb = data;
+	*target->thread.gs_cb = gs_cb;
+	if (target == current) {
+		__ctl_set_bit(2, 4);
+		restore_gs_cb(target->thread.gs_cb);
+	}
+	preempt_enable();
 	return rc;
 }
 

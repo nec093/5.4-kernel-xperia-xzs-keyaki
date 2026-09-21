@@ -813,6 +813,10 @@ static int watchpoint_handler(unsigned long addr, unsigned int esr,
 	if (min_dist > 0 && min_dist != -1)
 		step = watchpoint_report(slots[closest_match], addr, regs);
 
+	/* No exact match found? */
+	if (min_dist > 0 && min_dist != -1)
+		step = watchpoint_report(slots[closest_match], addr, regs);
+
 	rcu_read_unlock();
 
 	if (!step)

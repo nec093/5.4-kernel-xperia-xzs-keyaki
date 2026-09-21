@@ -106,7 +106,7 @@ struct dm_snapshot {
 	struct dm_exception_store *store;
 
 	unsigned in_progress;
-	wait_queue_head_t in_progress_wait;
+	struct wait_queue_head in_progress_wait;
 
 	struct dm_kcopyd_client *kcopyd_client;
 
@@ -137,6 +137,11 @@ struct dm_snapshot {
 	 * for them to be committed.
 	 */
 	struct bio_list bios_queued_during_merge;
+
+	/*
+	 * Flush data after merge.
+	 */
+	struct bio flush_bio;
 };
 
 /*
@@ -788,7 +793,7 @@ static int dm_add_exception(void *context, chunk_t old, chunk_t new)
 static uint32_t __minimum_chunk_size(struct origin *o)
 {
 	struct dm_snapshot *snap;
-	unsigned chunk_size = 0;
+	unsigned chunk_size = rounddown_pow_of_two(UINT_MAX);
 
 	if (o)
 		list_for_each_entry(snap, &o->snapshots, list)
@@ -1060,6 +1065,17 @@ shut:
 
 static void error_bios(struct bio *bio);
 
+static int flush_data(struct dm_snapshot *s)
+{
+	struct bio *flush_bio = &s->flush_bio;
+
+	bio_reset(flush_bio);
+	bio_set_dev(flush_bio, s->origin->bdev);
+	flush_bio->bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+
+	return submit_bio_wait(flush_bio);
+}
+
 static void merge_callback(int read_err, unsigned long write_err, void *context)
 {
 	struct dm_snapshot *s = context;
@@ -1070,6 +1086,11 @@ static void merge_callback(int read_err, unsigned long write_err, void *context)
 			DMERR("Read error: shutting down merge.");
 		else
 			DMERR("Write error: shutting down merge.");
+		goto shut;
+	}
+
+	if (flush_data(s) < 0) {
+		DMERR("Flush after merge failed: shutting down merge");
 		goto shut;
 	}
 
@@ -1197,6 +1218,7 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	s->first_merging_chunk = 0;
 	s->num_merging_chunks = 0;
 	bio_list_init(&s->bios_queued_during_merge);
+	bio_init(&s->flush_bio, NULL, 0);
 
 	/* Allocate hash table for COW data */
 	if (init_hash_tables(s)) {
@@ -1264,6 +1286,7 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	if (!s->store->chunk_size) {
 		ti->error = "Chunk size not set";
+		r = -EINVAL;
 		goto bad_read_metadata;
 	}
 
@@ -1390,6 +1413,8 @@ static void snapshot_dtr(struct dm_target *ti)
 	dm_exception_store_destroy(s->store);
 
 	mutex_destroy(&s->lock);
+
+	bio_uninit(&s->flush_bio);
 
 	dm_put_device(ti, s->cow);
 
@@ -2493,24 +2518,6 @@ static int __init dm_snapshot_init(void)
 		return r;
 	}
 
-	r = dm_register_target(&snapshot_target);
-	if (r < 0) {
-		DMERR("snapshot target register failed %d", r);
-		goto bad_register_snapshot_target;
-	}
-
-	r = dm_register_target(&origin_target);
-	if (r < 0) {
-		DMERR("Origin target register failed %d", r);
-		goto bad_register_origin_target;
-	}
-
-	r = dm_register_target(&merge_target);
-	if (r < 0) {
-		DMERR("Merge target register failed %d", r);
-		goto bad_register_merge_target;
-	}
-
 	r = init_origin_hash();
 	if (r) {
 		DMERR("init_origin_hash failed.");
@@ -2531,19 +2538,37 @@ static int __init dm_snapshot_init(void)
 		goto bad_pending_cache;
 	}
 
+	r = dm_register_target(&snapshot_target);
+	if (r < 0) {
+		DMERR("snapshot target register failed %d", r);
+		goto bad_register_snapshot_target;
+	}
+
+	r = dm_register_target(&origin_target);
+	if (r < 0) {
+		DMERR("Origin target register failed %d", r);
+		goto bad_register_origin_target;
+	}
+
+	r = dm_register_target(&merge_target);
+	if (r < 0) {
+		DMERR("Merge target register failed %d", r);
+		goto bad_register_merge_target;
+	}
+
 	return 0;
 
-bad_pending_cache:
-	kmem_cache_destroy(exception_cache);
-bad_exception_cache:
-	exit_origin_hash();
-bad_origin_hash:
-	dm_unregister_target(&merge_target);
 bad_register_merge_target:
 	dm_unregister_target(&origin_target);
 bad_register_origin_target:
 	dm_unregister_target(&snapshot_target);
 bad_register_snapshot_target:
+	kmem_cache_destroy(pending_cache);
+bad_pending_cache:
+	kmem_cache_destroy(exception_cache);
+bad_exception_cache:
+	exit_origin_hash();
+bad_origin_hash:
 	dm_exception_store_exit();
 
 	return r;

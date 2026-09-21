@@ -45,7 +45,7 @@ struct save_area {
 	u64 fprs[16];
 	u32 fpc;
 	u32 prefix;
-	u64 todpreg;
+	u32 todpreg;
 	u64 timer;
 	u64 todcmp;
 	u64 vxrs_low[16];
@@ -434,20 +434,6 @@ static void *nt_vmcoreinfo(void *ptr)
 	ptr = nt_init_name(ptr, 0, vmcoreinfo, size, name);
 	kfree(vmcoreinfo);
 	return ptr;
-}
-
-/*
- * Initialize final note (needed for /proc/vmcore code)
- */
-static void *nt_final(void *ptr)
-{
-	Elf64_Nhdr *note;
-
-	note = (Elf64_Nhdr *) ptr;
-	note->n_namesz = 0;
-	note->n_descsz = 0;
-	note->n_type = 0;
-	return PTR_ADD(ptr, sizeof(Elf64_Nhdr));
 }
 
 /*

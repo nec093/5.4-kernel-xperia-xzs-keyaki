@@ -220,6 +220,11 @@ static int venus_write_queue(struct venus_hfi_device *hdev,
 
 	new_wr_idx = wr_idx + dwords;
 	wr_ptr = (u32 *)(queue->qmem.kva + (wr_idx << 2));
+
+	if (wr_ptr < (u32 *)queue->qmem.kva ||
+	    wr_ptr > (u32 *)(queue->qmem.kva + queue->qmem.size - sizeof(*wr_ptr)))
+		return -EINVAL;
+
 	if (new_wr_idx < qsize) {
 		memcpy(wr_ptr, packet, dwords << 2);
 	} else {
@@ -287,6 +292,11 @@ static int venus_read_queue(struct venus_hfi_device *hdev,
 	}
 
 	rd_ptr = (u32 *)(queue->qmem.kva + (rd_idx << 2));
+
+	if (rd_ptr < (u32 *)queue->qmem.kva ||
+	    rd_ptr > (u32 *)(queue->qmem.kva + queue->qmem.size - sizeof(*rd_ptr)))
+		return -EINVAL;
+
 	dwords = *rd_ptr >> 2;
 	if (!dwords)
 		return -EINVAL;
@@ -344,7 +354,7 @@ static int venus_alloc(struct venus_hfi_device *hdev, struct mem_desc *desc,
 	desc->attrs = DMA_ATTR_WRITE_COMBINE;
 	desc->size = ALIGN(size, SZ_4K);
 
-	desc->kva = dma_alloc_attrs(dev, size, &desc->da, GFP_KERNEL,
+	desc->kva = dma_alloc_attrs(dev, desc->size, &desc->da, GFP_KERNEL,
 				    desc->attrs);
 	if (!desc->kva)
 		return -ENOMEM;
@@ -710,10 +720,8 @@ static int venus_interface_queues_init(struct venus_hfi_device *hdev)
 	if (ret)
 		return ret;
 
-	hdev->ifaceq_table.kva = desc.kva;
-	hdev->ifaceq_table.da = desc.da;
-	hdev->ifaceq_table.size = IFACEQ_TABLE_SIZE;
-	offset = hdev->ifaceq_table.size;
+	hdev->ifaceq_table = desc;
+	offset = IFACEQ_TABLE_SIZE;
 
 	for (i = 0; i < IFACEQ_NUM; i++) {
 		queue = &hdev->queues[i];
@@ -755,9 +763,7 @@ static int venus_interface_queues_init(struct venus_hfi_device *hdev)
 	if (ret) {
 		hdev->sfr.da = 0;
 	} else {
-		hdev->sfr.da = desc.da;
-		hdev->sfr.kva = desc.kva;
-		hdev->sfr.size = ALIGNED_SFR_SIZE;
+		hdev->sfr = desc;
 		sfr = hdev->sfr.kva;
 		sfr->buf_size = ALIGNED_SFR_SIZE;
 	}

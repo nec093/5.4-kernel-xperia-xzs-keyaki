@@ -164,6 +164,7 @@ out_fail:
 		kfree(dev);
 		drv = cpuidle_get_driver();
 		cpuidle_unregister_driver(drv);
+		kfree(dev);
 		kfree(drv);
 	}
 

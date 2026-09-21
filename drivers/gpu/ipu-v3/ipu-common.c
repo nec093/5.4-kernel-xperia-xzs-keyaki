@@ -1234,6 +1234,7 @@ static int ipu_add_client_devices(struct ipu_soc *ipu, unsigned long ipu_base)
 		pdev = platform_device_alloc(reg->name, id++);
 		if (!pdev) {
 			ret = -ENOMEM;
+			of_node_put(of_node);
 			goto err_register;
 		}
 
@@ -1401,6 +1402,8 @@ static int ipu_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	ipu->id = of_alias_get_id(np, "ipu");
+	if (ipu->id < 0)
+		ipu->id = 0;
 
 	if (of_device_is_compatible(np, "fsl,imx6qp-ipu") &&
 	    IS_ENABLED(CONFIG_DRM)) {

@@ -1178,7 +1178,7 @@ static ssize_t parent_show(struct device *device,
 	struct rxe_dev *rxe = container_of(device, struct rxe_dev,
 					   ib_dev.dev);
 
-	return snprintf(buf, 16, "%s\n", rxe_parent_name(rxe, 1));
+	return scnprintf(buf, PAGE_SIZE, "%s\n", rxe_parent_name(rxe, 1));
 }
 
 static DEVICE_ATTR_RO(parent);
@@ -1206,7 +1206,7 @@ int rxe_register_device(struct rxe_dev *rxe)
 			    rxe->ndev->dev_addr);
 	dev->dev.dma_ops = &dma_virt_ops;
 	dma_coerce_mask_and_coherent(&dev->dev,
-				     dma_get_required_mask(dev->dev.parent));
+				     dma_get_required_mask(&dev->dev));
 
 	dev->uverbs_abi_ver = RXE_UVERBS_ABI_VERSION;
 	dev->uverbs_cmd_mask = BIT_ULL(IB_USER_VERBS_CMD_GET_CONTEXT)

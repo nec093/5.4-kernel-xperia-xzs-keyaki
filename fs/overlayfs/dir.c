@@ -407,6 +407,10 @@ static int ovl_create_over_whiteout(struct dentry *dentry, struct inode *inode,
 	if (IS_ERR(upper))
 		goto out_dput;
 
+	err = -ESTALE;
+	if (d_is_negative(upper) || !IS_WHITEOUT(d_inode(upper)))
+		goto out_dput2;
+
 	err = ovl_create_real(wdir, newdentry, cattr, hardlink, true);
 	if (err)
 		goto out_dput2;
@@ -609,6 +613,11 @@ static int ovl_link(struct dentry *old, struct inode *newdir,
 	err = ovl_copy_up(old);
 	if (err)
 		goto out_drop_write;
+
+	err = ovl_copy_up(new->d_parent);
+	if (err)
+		goto out_drop_write;
+
 
 	err = ovl_nlink_start(old, &locked);
 	if (err)
@@ -856,8 +865,8 @@ static char *ovl_get_redirect(struct dentry *dentry, bool samedir)
 
 		buflen -= thislen;
 		memcpy(&buf[buflen], name, thislen);
-		tmp = dget_dlock(d->d_parent);
 		spin_unlock(&d->d_lock);
+		tmp = dget_parent(d);
 
 		dput(d);
 		d = tmp;
@@ -1038,9 +1047,13 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 				goto out_dput;
 		}
 	} else {
-		if (!d_is_negative(newdentry) &&
-		    (!new_opaque || !ovl_is_whiteout(newdentry)))
-			goto out_dput;
+		if (!d_is_negative(newdentry)) {
+			if (!new_opaque || !ovl_is_whiteout(newdentry))
+				goto out_dput;
+		} else {
+			if (flags & RENAME_EXCHANGE)
+				goto out_dput;
+		}
 	}
 
 	if (olddentry == trap)
@@ -1048,7 +1061,7 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 	if (newdentry == trap)
 		goto out_dput;
 
-	if (WARN_ON(olddentry->d_inode == newdentry->d_inode))
+	if (olddentry->d_inode == newdentry->d_inode)
 		goto out_dput;
 
 	err = 0;

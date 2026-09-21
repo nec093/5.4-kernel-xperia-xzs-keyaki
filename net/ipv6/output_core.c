@@ -14,29 +14,11 @@ static u32 __ipv6_select_ident(struct net *net,
 			       const struct in6_addr *dst,
 			       const struct in6_addr *src)
 {
-	const struct {
-		struct in6_addr dst;
-		struct in6_addr src;
-	} __aligned(SIPHASH_ALIGNMENT) combined = {
-		.dst = *dst,
-		.src = *src,
-	};
-	u32 hash, id;
+	u32 id;
 
-	/* Note the following code is not safe, but this is okay. */
-	if (unlikely(siphash_key_is_zero(&net->ipv4.ip_id_key)))
-		get_random_bytes(&net->ipv4.ip_id_key,
-				 sizeof(net->ipv4.ip_id_key));
-
-	hash = siphash(&combined, sizeof(combined), &net->ipv4.ip_id_key);
-
-	/* Treat id of 0 as unset and if we get 0 back from ip_idents_reserve,
-	 * set the hight order instead thus minimizing possible future
-	 * collisions.
-	 */
-	id = ip_idents_reserve(hash, 1);
-	if (unlikely(!id))
-		id = 1 << 31;
+	do {
+		id = prandom_u32();
+	} while (!id);
 
 	return id;
 }
@@ -49,7 +31,7 @@ static u32 __ipv6_select_ident(struct net *net,
  *
  * The network header must be set before calling this.
  */
-void ipv6_proxy_select_ident(struct net *net, struct sk_buff *skb)
+__be32 ipv6_proxy_select_ident(struct net *net, struct sk_buff *skb)
 {
 	struct in6_addr buf[2];
 	struct in6_addr *addrs;
@@ -60,10 +42,10 @@ void ipv6_proxy_select_ident(struct net *net, struct sk_buff *skb)
 				   offsetof(struct ipv6hdr, saddr),
 				   sizeof(buf), buf);
 	if (!addrs)
-		return;
+		return 0;
 
 	id = __ipv6_select_ident(net, &addrs[1], &addrs[0]);
-	skb_shinfo(skb)->ip6_frag_id = htonl(id);
+	return htonl(id);
 }
 EXPORT_SYMBOL_GPL(ipv6_proxy_select_ident);
 

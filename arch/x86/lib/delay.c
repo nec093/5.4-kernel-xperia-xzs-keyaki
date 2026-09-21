@@ -43,8 +43,8 @@ static void delay_loop(unsigned long loops)
 		"	jnz 2b		\n"
 		"3:	dec %0		\n"
 
-		: /* we don't need output */
-		:"a" (loops)
+		: "+a" (loops)
+		:
 	);
 }
 
@@ -107,10 +107,10 @@ static void delay_mwaitx(unsigned long __loops)
 		delay = min_t(u64, MWAITX_MAX_LOOPS, loops);
 
 		/*
-		 * Use cpu_tss as a cacheline-aligned, seldomly
+		 * Use cpu_tss_rw as a cacheline-aligned, seldomly
 		 * accessed per-cpu variable as the monitor target.
 		 */
-		__monitorx(raw_cpu_ptr(&cpu_tss), 0, 0);
+		__monitorx(raw_cpu_ptr(&cpu_tss_rw), 0, 0);
 
 		/*
 		 * AMD, like Intel's MWAIT version, supports the EAX hint and

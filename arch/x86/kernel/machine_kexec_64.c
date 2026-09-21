@@ -38,6 +38,7 @@ static struct kexec_file_ops *kexec_file_loaders[] = {
 static void free_transition_pgtable(struct kimage *image)
 {
 	free_page((unsigned long)image->arch.p4d);
+	image->arch.p4d = NULL;
 	free_page((unsigned long)image->arch.pud);
 	image->arch.pud = NULL;
 	free_page((unsigned long)image->arch.pmd);

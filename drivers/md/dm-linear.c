@@ -104,6 +104,7 @@ int dm_linear_map(struct dm_target *ti, struct bio *bio)
 }
 EXPORT_SYMBOL_GPL(dm_linear_map);
 
+#ifdef CONFIG_BLK_DEV_ZONED
 static int linear_end_io(struct dm_target *ti, struct bio *bio,
 			 blk_status_t *error)
 {
@@ -114,6 +115,7 @@ static int linear_end_io(struct dm_target *ti, struct bio *bio,
 
 	return DM_ENDIO_DONE;
 }
+#endif
 
 static void linear_status(struct dm_target *ti, status_type_t type,
 			  unsigned status_flags, char *result, unsigned maxlen)
@@ -194,12 +196,16 @@ EXPORT_SYMBOL_GPL(dm_linear_direct_access);
 static struct target_type linear_target = {
 	.name   = "linear",
 	.version = {1, 4, 0},
+#ifdef CONFIG_BLK_DEV_ZONED
+	.end_io = linear_end_io,
 	.features = DM_TARGET_PASSES_INTEGRITY | DM_TARGET_ZONED_HM,
+#else
+	.features = DM_TARGET_PASSES_INTEGRITY,
+#endif
 	.module = THIS_MODULE,
 	.ctr    = linear_ctr,
 	.dtr    = linear_dtr,
 	.map    = linear_map,
-	.end_io = linear_end_io,
 	.status = linear_status,
 	.prepare_ioctl = linear_prepare_ioctl,
 	.iterate_devices = linear_iterate_devices,
