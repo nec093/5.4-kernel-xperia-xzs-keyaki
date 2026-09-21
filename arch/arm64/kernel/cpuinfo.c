@@ -37,6 +37,7 @@
 #include <linux/delay.h>
 #include <linux/of_fdt.h>
 
+extern const char *machine_name;
 char* (*arch_read_hardware_id)(void);
 EXPORT_SYMBOL(arch_read_hardware_id);
 

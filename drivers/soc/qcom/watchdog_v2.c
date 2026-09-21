@@ -36,8 +36,6 @@
 #include <soc/qcom/watchdog.h>
 #include <linux/dma-mapping.h>
 
-extern void touch_softlockup_watchdog(void);
-
 #define MODULE_NAME "msm_watchdog"
 #define WDT0_ACCSCSSNBARK_INT 0
 #define TCSR_WDT_CFG	0x30
@@ -494,7 +492,6 @@ void touch_nmi_watchdog(void)
 	if (nsecs_to_jiffies(ns) > delay_time)
 		pet_watchdog(wdog_dd);
 
-	touch_softlockup_watchdog();
 }
 EXPORT_SYMBOL(touch_nmi_watchdog);
 #endif

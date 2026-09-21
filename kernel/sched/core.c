@@ -6864,3 +6864,39 @@ int sched_set_wake_up_idle(struct task_struct *p, int wake_up_idle)
 	return 0;
 }
 #endif /* CONFIG_SMP */
+
+/* ---- more CAF shims (EAS / WALT interface variables used by arch and drivers) ---- */
+#include <linux/sched_energy.h>
+
+struct sched_group_energy *sge_array[NR_CPUS][NR_SD_LEVELS];
+EXPORT_SYMBOL(sge_array);
+
+/* The energy model (kernel/sched/energy.c) is not built in the mainline-CFS configuration. */
+void init_sched_energy_costs(void)
+{
+}
+
+ATOMIC_NOTIFIER_HEAD(load_alert_notifier_head);
+EXPORT_SYMBOL_GPL(load_alert_notifier_head);
+
+DEFINE_PER_CPU_READ_MOSTLY(int, sched_load_boost);
+EXPORT_PER_CPU_SYMBOL(sched_load_boost);
+
+/* EAS tunables: kept as plain values so userspace (power HAL) can still write them */
+unsigned int sysctl_sched_capacity_margin = 1078;
+unsigned int sysctl_sched_capacity_margin_down = 1205;
+unsigned int sysctl_sched_sync_hint_enable = 1;
+unsigned int sysctl_sched_cstate_aware = 1;
+
+int sched_updown_migrate_handler(struct ctl_table *table, int write,
+				 void __user *buffer, size_t *lenp,
+				 loff_t *ppos)
+{
+	return proc_dointvec(table, write, buffer, lenp, ppos);
+}
+
+/* RT-aware softirq deferral is not implemented: never defer */
+bool cpupri_check_rt(void)
+{
+	return false;
+}
