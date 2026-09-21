@@ -456,10 +456,7 @@ enum elv_merge elv_merge(struct request_queue *q, struct request **req,
 	/*
 	 * First try one-hit cache.
 	 */
-	if (q->last_merge) {
-		if (!elv_bio_merge_ok(q->last_merge, bio))
-			return ELEVATOR_NO_MERGE;
-
+	if (q->last_merge && elv_bio_merge_ok(q->last_merge, bio)) {
 		enum elv_merge ret = blk_try_merge(q->last_merge, bio);
 
 		if (ret != ELEVATOR_NO_MERGE) {

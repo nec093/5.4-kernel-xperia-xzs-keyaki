@@ -2958,9 +2958,6 @@ int vfs_create2(struct vfsmount *mnt, struct inode *dir, struct dentry *dentry,
 	error = dir->i_op->create(dir, dentry, mode, want_excl);
 	if (error)
 		return error;
-	error = security_inode_post_create(dir, dentry, mode);
-	if (error)
-		return error;
 	if (!error)
 		fsnotify_create(dir, dentry);
 	return error;
@@ -3007,7 +3004,7 @@ static int may_open(const struct path *path, int acc_mode, int flag)
 		break;
 	}
 
-	error = inode_permission2(mnt, inode, MAY_OPEN | acc_mode);
+	error = inode_permission2(path->mnt, inode, MAY_OPEN | acc_mode);
 	if (error)
 		return error;
 
@@ -3795,9 +3792,6 @@ int vfs_mknod2(struct vfsmount *mnt, struct inode *dir, struct dentry *dentry, u
 	if (error)
 		return error;
 
-	error = security_inode_post_create(dir, dentry, mode);
-	if (error)
-		return error;
 
 	if (!error)
 		fsnotify_create(dir, dentry);

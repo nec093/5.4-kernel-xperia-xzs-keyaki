@@ -1661,7 +1661,6 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 
 	if (blk_mq_sched_bio_merge(q, bio))
 		return BLK_QC_T_NONE;
-	}
 
 	wb_acct = wbt_wait(q->rq_wb, bio, NULL);
 
@@ -1705,56 +1704,6 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 		else if (blk_queue_nomerges(q))
 			request_count = blk_plug_queued_count(q);
 
-/*
- * Single hardware queue variant. This will attempt to use any per-process
- * plug for merging and IO deferral.
- */
-static blk_qc_t blk_sq_make_request(struct request_queue *q, struct bio *bio)
-{
-	const int is_sync = rw_is_sync(bio_op(bio), bio->bi_opf);
-	const int is_flush_fua = bio->bi_opf & (REQ_PREFLUSH | REQ_FUA);
-	struct blk_plug *plug;
-	unsigned int request_count = 0;
-	struct blk_map_ctx data;
-	struct request *rq;
-	blk_qc_t cookie;
-
-	blk_queue_bounce(q, &bio);
-
-	if (bio_integrity_enabled(bio) && bio_integrity_prep(bio)) {
-		bio_io_error(bio);
-		return BLK_QC_T_NONE;
-	}
-
-	blk_queue_split(q, &bio, q->bio_split);
-
-	if (!is_flush_fua && !blk_queue_nomerges(q)) {
-		if (blk_attempt_plug_merge(q, bio, &request_count, NULL))
-			return BLK_QC_T_NONE;
-	} else
-		request_count = blk_plug_queued_count(q);
-
-	rq = blk_mq_map_request(q, bio, &data);
-	if (unlikely(!rq)) {
-		return BLK_QC_T_NONE;
-	}
-
-	cookie = blk_tag_to_qc_t(rq->tag, data.hctx->queue_num);
-
-	if (unlikely(is_flush_fua)) {
-		blk_mq_bio_to_request(rq, bio);
-		blk_insert_flush(rq);
-		goto run_queue;
-	}
-
-	/*
-	 * A task plug currently exists. Since this is completely lockless,
-	 * utilize that to temporarily store requests until the task is
-	 * either done or scheduled away.
-	 */
-	plug = current->plug;
-	if (plug) {
-		blk_mq_bio_to_request(rq, bio);
 		if (!request_count)
 			trace_block_plug(q);
 		else
@@ -2219,8 +2168,7 @@ static void blk_mq_map_swqueue(struct request_queue *q)
 		ctx = per_cpu_ptr(q->queue_ctx, i);
 		hctx = blk_mq_map_queue(q, i);
 
-		if (cpumask_test_cpu(i, online_mask))
-			cpumask_set_cpu(i, hctx->cpumask);
+		cpumask_set_cpu(i, hctx->cpumask);
 		ctx->index_hw = hctx->nr_ctx;
 		hctx->ctxs[hctx->nr_ctx++] = ctx;
 	}
@@ -2256,16 +2204,9 @@ static void blk_mq_map_swqueue(struct request_queue *q)
 
 		/*
 		 * Initialize batch roundrobin counts
-		 * Set next_cpu for only those hctxs that have an online CPU
-		 * in their cpumask field. For hctxs that belong to few online
-		 * and few offline CPUs, this will always provide one CPU from
-		 * online ones. For hctxs belonging to all offline CPUs, their
-		 * cpumask will be updated in reinit_notify.
 		 */
-		if (cpumask_first(hctx->cpumask) < nr_cpu_ids) {
-			hctx->next_cpu = cpumask_first(hctx->cpumask);
-			hctx->next_cpu_batch = BLK_MQ_CPU_WORK_BATCH;
-		}
+		hctx->next_cpu = cpumask_first(hctx->cpumask);
+		hctx->next_cpu_batch = BLK_MQ_CPU_WORK_BATCH;
 	}
 }
 
