@@ -2210,13 +2210,8 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		struct dentry *root = nd->root.dentry;
 		struct vfsmount *mnt = nd->root.mnt;
 		struct inode *inode = root->d_inode;
-		if (*s) {
-			if (unlikely(!d_can_lookup(root)))
-				return ERR_PTR(-ENOTDIR);
-			retval = inode_permission2(mnt, inode, MAY_EXEC);
-			if (retval)
-				return ERR_PTR(retval);
-		}
+		if (*s && unlikely(!d_can_lookup(root)))
+			return ERR_PTR(-ENOTDIR);
 		nd->path = nd->root;
 		nd->inode = inode;
 		if (flags & LOOKUP_RCU) {
@@ -2988,7 +2983,6 @@ bool may_open_dev(const struct path *path)
 static int may_open(const struct path *path, int acc_mode, int flag)
 {
 	struct dentry *dentry = path->dentry;
-	struct vfsmount *mnt = path->mnt;
 	struct inode *inode = dentry->d_inode;
 	int error;
 

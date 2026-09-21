@@ -166,8 +166,6 @@ struct security_class_mapping secclass_map[] = {
 	{ "peer", { "recv", NULL } },
 	{ "capability2",
 	  { COMMON_CAP2_PERMS, NULL } },
-	{ "bpf",
-	  {"map_create", "map_read", "map_write", "prog_load", "prog_run"} },
 	{ "kernel_service", { "use_as_override", "create_files_as", NULL } },
 	{ "tun_socket",
 	  { COMMON_SOCK_PERMS, "attach_queue", NULL } },
@@ -244,6 +242,6 @@ struct security_class_mapping secclass_map[] = {
 	{ NULL }
   };
 
-#if defined(__KERNEL__) && PF_MAX > 44
+#if PF_MAX > 44
 #error New address family defined, please update secclass_map.
 #endif

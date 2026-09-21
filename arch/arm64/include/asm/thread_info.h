@@ -89,6 +89,7 @@ void arch_setup_new_exec(void);
 #define TIF_SECCOMP		11
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
 #define TIF_FREEZE		19
+#define TIF_MM_RELEASED		24
 #define TIF_RESTORE_SIGMASK	20
 #define TIF_SINGLESTEP		21
 #define TIF_32BIT		22	/* 32bit process */

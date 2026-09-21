@@ -170,6 +170,9 @@ extern int overcommit_kbytes_handler(struct ctl_table *, int, void __user *,
  * mmap() functions).
  */
 
+/* Speculative page faults are not carried in this port: INIT_VMA is a no-op */
+#define INIT_VMA(vma) do { } while (0)
+
 extern struct kmem_cache *vm_area_cachep;
 
 #ifndef CONFIG_MMU
