@@ -34,6 +34,7 @@
 #endif
 
 #include <linux/netfilter/xt_socket.h>
+#include <net/netfilter/nf_socket.h>
 #include "xt_qtaguid_internal.h"
 #include "xt_qtaguid_print.h"
 #include "../../fs/proc/internal.h"
@@ -1083,7 +1084,7 @@ static int ipx_proto(const struct sk_buff *skb,
 {
 	int thoff = 0, tproto;
 
-	switch (par->family) {
+	switch (xt_family(par)) {
 	case NFPROTO_IPV6:
 		tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL);
 		if (tproto < 0)
@@ -1180,20 +1181,20 @@ static void get_dev_and_dir(const struct sk_buff *skb,
 {
 	BUG_ON(!direction || !el_dev);
 
-	if (par->in) {
-		*el_dev = par->in;
+	if (xt_in(par)) {
+		*el_dev = xt_in(par);
 		*direction = IFS_RX;
-	} else if (par->out) {
-		*el_dev = par->out;
+	} else if (xt_out(par)) {
+		*el_dev = xt_out(par);
 		*direction = IFS_TX;
 	} else {
-		pr_err("qtaguid[%d]: %s(): no par->in/out?!!\n",
-		       par->hooknum, __func__);
+		pr_err("qtaguid[%d]: %s(): no xt_in(par)/out?!!\n",
+		       xt_hooknum(par), __func__);
 		BUG();
 	}
 	if (skb->dev && *el_dev != skb->dev) {
 		MT_DEBUG("qtaguid[%d]: skb->dev=%pK %s vs par->%s=%pK %s\n",
-			 par->hooknum, skb->dev, skb->dev->name,
+			 xt_hooknum(par), skb->dev, skb->dev->name,
 			 *direction == IFS_RX ? "in" : "out",  *el_dev,
 			 (*el_dev)->name);
 	}
@@ -1218,19 +1219,19 @@ static void iface_stat_update_from_skb(const struct sk_buff *skb,
 	proto = ipx_proto(skb, par);
 	MT_DEBUG("qtaguid[%d]: iface_stat: %s(%s): "
 		 "type=%d fam=%d proto=%d dir=%d\n",
-		 par->hooknum, __func__, el_dev->name, el_dev->type,
-		 par->family, proto, direction);
+		 xt_hooknum(par), __func__, el_dev->name, el_dev->type,
+		 xt_family(par), proto, direction);
 
 	spin_lock_bh(&iface_stat_list_lock);
 	entry = get_iface_entry(el_dev->name);
 	if (entry == NULL) {
 		IF_DEBUG("qtaguid[%d]: iface_stat: %s(%s): not tracked\n",
-			 par->hooknum, __func__, el_dev->name);
+			 xt_hooknum(par), __func__, el_dev->name);
 		spin_unlock_bh(&iface_stat_list_lock);
 		return;
 	}
 
-	IF_DEBUG("qtaguid[%d]: %s(%s): entry=%p\n", par->hooknum,  __func__,
+	IF_DEBUG("qtaguid[%d]: %s(%s): entry=%p\n", xt_hooknum(par),  __func__,
 		 el_dev->name, entry);
 
 	data_counters_update(&entry->totals_via_skb, 0, direction, proto,
@@ -1577,10 +1578,10 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 				    struct xt_action_param *par)
 {
 	struct sock *sk;
-	unsigned int hook_mask = (1 << par->hooknum);
+	unsigned int hook_mask = (1 << xt_hooknum(par));
 
 	MT_DEBUG("qtaguid[%d]: find_sk(skb=%pK) family=%d\n",
-		 par->hooknum, skb, par->family);
+		 xt_hooknum(par), skb, xt_family(par));
 
 	/*
 	 * Let's not abuse the the xt_socket_get*_sk(), or else it will
@@ -1589,12 +1590,12 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 	if (!(hook_mask & XT_SOCKET_SUPPORTED_HOOKS))
 		return NULL;
 
-	switch (par->family) {
+	switch (xt_family(par)) {
 	case NFPROTO_IPV6:
-		sk = xt_socket_lookup_slow_v6(dev_net(skb->dev), skb, par->in);
+		sk = nf_sk_lookup_slow_v6(dev_net(skb->dev), skb, xt_in(par));
 		break;
 	case NFPROTO_IPV4:
-		sk = xt_socket_lookup_slow_v4(dev_net(skb->dev), skb, par->in);
+		sk = nf_sk_lookup_slow_v4(dev_net(skb->dev), skb, xt_in(par));
 		break;
 	default:
 		return NULL;
@@ -1602,7 +1603,7 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 
 	if (sk) {
 		MT_DEBUG("qtaguid[%d]: %pK->sk_proto=%u->sk_state=%d\n",
-			 par->hooknum, sk, sk->sk_protocol, sk->sk_state);
+			 xt_hooknum(par), sk, sk->sk_protocol, sk->sk_state);
 	}
 	return sk;
 }
@@ -1618,8 +1619,8 @@ static void account_for_uid(const struct sk_buff *skb,
 	get_dev_and_dir(skb, par, &direction, &el_dev);
 	proto = ipx_proto(skb, par);
 	MT_DEBUG("qtaguid[%d]: dev name=%s type=%d fam=%d proto=%d dir=%d\n",
-		 par->hooknum, el_dev->name, el_dev->type,
-		 par->family, proto, direction);
+		 xt_hooknum(par), el_dev->name, el_dev->type,
+		 xt_family(par), proto, direction);
 
 	if_tag_stat_update(el_dev->name, uid,
 			   skb->sk ? skb->sk : alternate_sk,
@@ -1645,8 +1646,8 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	if (unlikely(module_passive))
 		return (info->match ^ info->invert) == 0;
 
-	MT_DEBUG("qtaguid[%d]: entered skb=%p par->in=%p/out=%p fam=%d\n",
-		 par->hooknum, skb, par->in, par->out, par->family);
+	MT_DEBUG("qtaguid[%d]: entered skb=%p xt_in(par)=%p/out=%p fam=%d\n",
+		 xt_hooknum(par), skb, xt_in(par), xt_out(par), xt_family(par));
 
 	atomic64_inc(&qtu_events.match_calls);
 	if (skb == NULL) {
@@ -1654,7 +1655,7 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		goto ret_res;
 	}
 
-	switch (par->hooknum) {
+	switch (xt_hooknum(par)) {
 	case NF_INET_PRE_ROUTING:
 	case NF_INET_POST_ROUTING:
 		atomic64_inc(&qtu_events.match_calls_prepost);
@@ -1711,7 +1712,7 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		atomic64_inc(&qtu_events.match_found_sk);
 	}
 	MT_DEBUG("qtaguid[%d]: sk=%p got_sock=%d fam=%d proto=%d\n",
-		 par->hooknum, sk, got_sock, par->family, ipx_proto(skb, par));
+		 xt_hooknum(par), sk, got_sock, xt_family(par), ipx_proto(skb, par));
 
 	if (!sk) {
 		/*
@@ -1721,7 +1722,7 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		 */
 		if (do_tag_stat)
 			account_for_uid(skb, sk, 0, par);
-		MT_DEBUG("qtaguid[%d]: leaving (sk=NULL)\n", par->hooknum);
+		MT_DEBUG("qtaguid[%d]: leaving (sk=NULL)\n", xt_hooknum(par));
 		res = (info->match ^ info->invert) == 0;
 		atomic64_inc(&qtu_events.match_no_sk);
 		goto put_sock_ret_res;
@@ -1748,7 +1749,7 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		     uid_lte(sock_uid, uid_max)) ^
 		    !(info->invert & XT_QTAGUID_UID)) {
 			MT_DEBUG("qtaguid[%d]: leaving uid not matching\n",
-				 par->hooknum);
+				 xt_hooknum(par));
 			res = false;
 			goto put_sock_ret_res;
 		}
@@ -1759,7 +1760,7 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		set_sk_callback_lock = true;
 		read_lock_bh(&sk->sk_callback_lock);
 		MT_DEBUG("qtaguid[%d]: sk=%pK->sk_socket=%pK->file=%pK\n",
-			 par->hooknum, sk, sk->sk_socket,
+			 xt_hooknum(par), sk, sk->sk_socket,
 			 sk->sk_socket ? sk->sk_socket->file : (void *)-1LL);
 		filp = sk->sk_socket ? sk->sk_socket->file : NULL;
 		if (!filp) {
@@ -1769,18 +1770,18 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 			goto put_sock_ret_res;
 		}
 		MT_DEBUG("qtaguid[%d]: filp...uid=%u\n",
-			 par->hooknum, filp ?
+			 xt_hooknum(par), filp ?
 			 from_kuid(&init_user_ns, filp->f_cred->fsuid) : -1);
 		if ((gid_gte(filp->f_cred->fsgid, gid_min) &&
 				gid_lte(filp->f_cred->fsgid, gid_max)) ^
 			!(info->invert & XT_QTAGUID_GID)) {
 			MT_DEBUG("qtaguid[%d]: leaving gid not matching\n",
-				par->hooknum);
+				xt_hooknum(par));
 			res = false;
 			goto put_sock_ret_res;
 		}
 	}
-	MT_DEBUG("qtaguid[%d]: leaving matched\n", par->hooknum);
+	MT_DEBUG("qtaguid[%d]: leaving matched\n", xt_hooknum(par));
 	res = true;
 
 put_sock_ret_res:
@@ -1789,7 +1790,7 @@ put_sock_ret_res:
 	if (set_sk_callback_lock)
 		read_unlock_bh(&sk->sk_callback_lock);
 ret_res:
-	MT_DEBUG("qtaguid[%d]: left %d\n", par->hooknum, res);
+	MT_DEBUG("qtaguid[%d]: left %d\n", xt_hooknum(par), res);
 	return res;
 }
 
@@ -1923,7 +1924,7 @@ static int qtaguid_ctrl_proc_show(struct seq_file *m, void *v)
 			 uid,
 			 sock_tag_entry->pid
 			);
-		sk_ref_count = atomic_read(
+		sk_ref_count = refcount_read(
 			&sock_tag_entry->sk->sk_refcnt);
 		seq_printf(m, "sock=%pK tag=0x%llx (uid=%u) pid=%u "
 			   "f_count=%d\n",
@@ -2228,7 +2229,7 @@ static int ctrl_cmd_tag(const char *input)
 		goto err;
 	}
 	CT_DEBUG("qtaguid: ctrl_tag(%s): socket->...->sk_refcnt=%d ->sk=%p\n",
-		 input, atomic_read(&el_socket->sk->sk_refcnt),
+		 input, refcount_read(&el_socket->sk->sk_refcnt),
 		 el_socket->sk);
 	if (argc < 3) {
 		acct_tag = make_atag_from_value(0);
@@ -2276,7 +2277,7 @@ static int ctrl_cmd_tag(const char *input)
 		CT_DEBUG("qtaguid: ctrl_tag(%s): retag for sk=%p "
 			 "st@%p ...->sk_refcnt=%d\n",
 			 input, el_socket->sk, sock_tag_entry,
-			 atomic_read(&el_socket->sk->sk_refcnt));
+			 refcount_read(&el_socket->sk->sk_refcnt));
 		prev_tag_ref_entry = lookup_tag_ref(sock_tag_entry->tag,
 						    &uid_tag_data_entry);
 		BUG_ON(IS_ERR_OR_NULL(prev_tag_ref_entry));
@@ -2335,13 +2336,13 @@ static int ctrl_cmd_tag(const char *input)
 	/* We keep the ref to the sk until it is untagged */
 	CT_DEBUG("qtaguid: ctrl_tag(%s): done st@%p ...->sk_refcnt=%d\n",
 		 input, sock_tag_entry,
-		 atomic_read(&el_socket->sk->sk_refcnt));
+		 refcount_read(&el_socket->sk->sk_refcnt));
 	sockfd_put(el_socket);
 	return 0;
 
 err_put:
 	CT_DEBUG("qtaguid: ctrl_tag(%s): done. ...->sk_refcnt=%d\n",
-		 input, atomic_read(&el_socket->sk->sk_refcnt) - 1);
+		 input, refcount_read(&el_socket->sk->sk_refcnt) - 1);
 	/* Release the sock_fd that was grabbed by sockfd_lookup(). */
 	sockfd_put(el_socket);
 	return res;
@@ -2440,7 +2441,7 @@ int qtaguid_untag(struct socket *el_socket, bool kernel)
 	sock_put(sock_tag_entry->sk);
 	CT_DEBUG("qtaguid: done. st@%p ...->sk_refcnt=%d\n",
 		 sock_tag_entry,
-		 atomic_read(&el_socket->sk->sk_refcnt));
+		 refcount_read(&el_socket->sk->sk_refcnt));
 
 	kfree(sock_tag_entry);
 	atomic64_inc(&qtu_events.sockets_untagged);

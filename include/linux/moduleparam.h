@@ -236,11 +236,8 @@ struct kparam_array
 			    (perm) + sizeof(__check_old_set_param(set))*0, -1, 0)
 
 /* We don't get oldget: it's often a new-style param_get_uint, etc. */
-static inline int
-__check_old_set_param(int (*oldset)(const char *, struct kernel_param *))
-{
-	return 0;
-}
+/* Both old- and new-style (const struct kernel_param *) set() callbacks exist in the tree */
+#define __check_old_set_param(oldset) 0
 
 #ifdef CONFIG_SYSFS
 extern void kernel_param_lock(struct module *mod);

@@ -49,115 +49,6 @@
  *     then local services could intercept traffic going through the
  *     box.
  */
-static struct sock *
-xt_socket_get_sock_v4(struct net *net, struct sk_buff *skb, const int doff,
-		      const u8 protocol,
-		      const __be32 saddr, const __be32 daddr,
-		      const __be16 sport, const __be16 dport,
-		      const struct net_device *in)
-{
-	switch (protocol) {
-	case IPPROTO_TCP:
-		return inet_lookup(net, &tcp_hashinfo, skb, doff,
-				   saddr, sport, daddr, dport,
-				   in->ifindex);
-	case IPPROTO_UDP:
-		return udp4_lib_lookup(net, saddr, sport, daddr, dport,
-				       in->ifindex);
-	}
-	return NULL;
-}
-
-static bool xt_socket_sk_is_transparent(struct sock *sk)
-{
-	switch (sk->sk_state) {
-	case TCP_TIME_WAIT:
-		return inet_twsk(sk)->tw_transparent;
-
-	case TCP_NEW_SYN_RECV:
-		return inet_rsk(inet_reqsk(sk))->no_srccheck;
-
-	default:
-		return inet_sk(sk)->transparent;
-	}
-}
-
-struct sock *xt_socket_lookup_slow_v4(struct net *net,
-					     const struct sk_buff *skb,
-					     const struct net_device *indev)
-{
-	const struct iphdr *iph = ip_hdr(skb);
-	struct sk_buff *data_skb = NULL;
-	int doff = 0;
-	struct sock *sk = skb->sk;
-	__be32 uninitialized_var(daddr), uninitialized_var(saddr);
-	__be16 uninitialized_var(dport), uninitialized_var(sport);
-	u8 uninitialized_var(protocol);
-#ifdef XT_SOCKET_HAVE_CONNTRACK
-	struct nf_conn const *ct;
-	enum ip_conntrack_info ctinfo;
-#endif
-
-	if (iph->protocol == IPPROTO_UDP || iph->protocol == IPPROTO_TCP) {
-		struct udphdr *hp;
-		struct tcphdr _hdr;
-
-		hp = skb_header_pointer(skb, ip_hdrlen(skb),
-					iph->protocol == IPPROTO_UDP ?
-					sizeof(*hp) : sizeof(_hdr),
-					&_hdr);
-		if (hp == NULL)
-			return NULL;
-
-		protocol = iph->protocol;
-		saddr = iph->saddr;
-		sport = hp->source;
-		daddr = iph->daddr;
-		dport = hp->dest;
-		data_skb = (struct sk_buff *)skb;
-		doff = iph->protocol == IPPROTO_TCP ?
-			ip_hdrlen(skb) + __tcp_hdrlen((struct tcphdr *)hp) :
-			ip_hdrlen(skb) + sizeof(*hp);
-
-	} else if (iph->protocol == IPPROTO_ICMP) {
-		if (extract_icmp4_fields(skb, &protocol, &saddr, &daddr,
-					 &sport, &dport))
-			return NULL;
-	} else {
-		return NULL;
-	}
-
-#ifdef XT_SOCKET_HAVE_CONNTRACK
-	/* Do the lookup with the original socket address in
-	 * case this is a reply packet of an established
-	 * SNAT-ted connection.
-	 */
-	ct = nf_ct_get(skb, &ctinfo);
-	if (ct && !nf_ct_is_untracked(ct) &&
-	    ((iph->protocol != IPPROTO_ICMP &&
-	      ctinfo == IP_CT_ESTABLISHED_REPLY) ||
-	     (iph->protocol == IPPROTO_ICMP &&
-	      ctinfo == IP_CT_RELATED_REPLY)) &&
-	    (ct->status & IPS_SRC_NAT_DONE)) {
-
-		daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-		dport = (iph->protocol == IPPROTO_TCP) ?
-			ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.tcp.port :
-			ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port;
-	}
-#endif
-
-	if (sk)
-		atomic_inc(&sk->sk_refcnt);
-	else
-		sk = xt_socket_get_sock_v4(dev_net(skb->dev), data_skb, doff,
-					   protocol, saddr, daddr, sport,
-					   dport, indev);
-
-	return sk;
-}
-EXPORT_SYMBOL(xt_socket_lookup_slow_v4);
-
 static bool
 socket_match(const struct sk_buff *skb, struct xt_action_param *par,
 	     const struct xt_socket_mtinfo1 *info)
@@ -188,7 +79,8 @@ socket_match(const struct sk_buff *skb, struct xt_action_param *par,
 		    transparent && sk_fullsock(sk))
 			pskb->mark = sk->sk_mark;
 
-		sock_gen_put(sk);
+		if (sk != skb->sk)
+			sock_gen_put(sk);
 
 		if (wildcard || !transparent)
 			sk = NULL;
