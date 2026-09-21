@@ -720,7 +720,7 @@ static void *__iommu_alloc_attrs(struct device *dev, size_t size,
 				 unsigned long attrs)
 {
 	bool coherent = is_dma_coherent(dev, attrs);
-	int ioprot = dma_info_to_prot(DMA_BIDIRECTIONAL, coherent, attrs);
+	int ioprot = dma_direction_to_prot(DMA_BIDIRECTIONAL, coherent);
 	size_t iosize = size;
 	void *addr;
 
@@ -936,7 +936,7 @@ static dma_addr_t __iommu_map_page(struct device *dev, struct page *page,
 				   unsigned long attrs)
 {
 	bool coherent = is_dma_coherent(dev, attrs);
-	int prot = dma_info_to_prot(dir, coherent, attrs);
+	int prot = dma_direction_to_prot(dir, coherent);
 	dma_addr_t dev_addr = iommu_dma_map_page(dev, page, offset, size, prot);
 
 	if (!iommu_dma_mapping_error(dev, dev_addr) &&
@@ -994,7 +994,7 @@ static int __iommu_map_sg_attrs(struct device *dev, struct scatterlist *sgl,
 		__iommu_sync_sg_for_device(dev, sgl, nelems, dir);
 
 	return iommu_dma_map_sg(dev, sgl, nelems,
-				dma_info_to_prot(dir, coherent, attrs));
+				dma_direction_to_prot(dir, coherent));
 }
 
 static void __iommu_unmap_sg_attrs(struct device *dev,

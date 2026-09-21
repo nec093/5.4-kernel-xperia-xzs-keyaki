@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 obj-$(CONFIG_IOMMU_API) += iommu.o
 obj-$(CONFIG_IOMMU_API) += iommu-traces.o
 obj-$(CONFIG_IOMMU_API) += iommu-sysfs.o
@@ -35,4 +34,3 @@ obj-$(CONFIG_QCOM_IOMMU_V1) += qcom/
 
 obj-$(CONFIG_ARM_SMMU) += arm-smmu.o arm-smmu-errata.o
 
-obj-$(CONFIG_QCOM_IOMMU) += qcom_iommu.o
