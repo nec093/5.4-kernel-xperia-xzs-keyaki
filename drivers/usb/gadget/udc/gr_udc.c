@@ -1539,7 +1539,7 @@ static int gr_ep_enable(struct usb_ep *_ep,
 	 * additional transactions.
 	 */
 	max = 0x7ff & usb_endpoint_maxp(desc);
-	nt = usb_endpoint_maxp_mult(desc) - 1;
+	nt = 0x3 & (usb_endpoint_maxp(desc) >> 11);
 	buffer_size = GR_BUFFER_SIZE(epctrl);
 	if (nt && (mode == 0 || mode == 2)) {
 		dev_err(dev->dev,
@@ -1841,7 +1841,7 @@ static void gr_fifo_flush(struct usb_ep *_ep)
 	spin_unlock(&ep->dev->lock);
 }
 
-static const struct usb_ep_ops gr_ep_ops = {
+static struct usb_ep_ops gr_ep_ops = {
 	.enable		= gr_ep_enable,
 	.disable	= gr_ep_disable,
 
@@ -2000,12 +2000,9 @@ static int gr_ep_init(struct gr_udc *dev, int num, int is_in, u32 maxplimit)
 
 	if (num == 0) {
 		_req = gr_alloc_request(&ep->ep, GFP_ATOMIC);
-		if (!_req)
-			return -ENOMEM;
-
 		buf = devm_kzalloc(dev->dev, PAGE_SIZE, GFP_DMA | GFP_ATOMIC);
-		if (!buf) {
-			gr_free_request(&ep->ep, _req);
+		if (!_req || !buf) {
+			/* possible _req freed by gr_probe via gr_remove */
 			return -ENOMEM;
 		}
 

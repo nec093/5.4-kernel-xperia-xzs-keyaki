@@ -41,7 +41,6 @@
 /* Vendor and product ids */
 #define TI_VENDOR_ID			0x0451
 #define IBM_VENDOR_ID			0x04b3
-#define STARTECH_VENDOR_ID		0x14b0
 #define TI_3410_PRODUCT_ID		0x3410
 #define IBM_4543_PRODUCT_ID		0x4543
 #define IBM_454B_PRODUCT_ID		0x454b
@@ -379,7 +378,6 @@ static const struct usb_device_id ti_id_table_3410[] = {
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1131_PRODUCT_ID) },
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1150_PRODUCT_ID) },
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1151_PRODUCT_ID) },
-	{ USB_DEVICE(STARTECH_VENDOR_ID, TI_3410_PRODUCT_ID) },
 	{ }	/* terminator */
 };
 
@@ -418,7 +416,6 @@ static const struct usb_device_id ti_id_table_combined[] = {
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1131_PRODUCT_ID) },
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1150_PRODUCT_ID) },
 	{ USB_DEVICE(MXU1_VENDOR_ID, MXU1_1151_PRODUCT_ID) },
-	{ USB_DEVICE(STARTECH_VENDOR_ID, TI_3410_PRODUCT_ID) },
 	{ }	/* terminator */
 };
 
@@ -430,7 +427,6 @@ static struct usb_serial_driver ti_1port_device = {
 	.description		= "TI USB 3410 1 port adapter",
 	.id_table		= ti_id_table_3410,
 	.num_ports		= 1,
-	.num_bulk_out		= 1,
 	.attach			= ti_startup,
 	.release		= ti_release,
 	.port_probe		= ti_port_probe,
@@ -463,7 +459,6 @@ static struct usb_serial_driver ti_2port_device = {
 	.description		= "TI USB 5052 2 port adapter",
 	.id_table		= ti_id_table_5052,
 	.num_ports		= 2,
-	.num_bulk_out		= 1,
 	.attach			= ti_startup,
 	.release		= ti_release,
 	.port_probe		= ti_port_probe,
@@ -928,12 +923,20 @@ static void ti_set_termios(struct tty_struct *tty,
 {
 	struct ti_port *tport = usb_get_serial_port_data(port);
 	struct ti_uart_config *config;
+	tcflag_t cflag, iflag;
 	int baud;
 	int status;
 	int port_number = port->port_number;
 	unsigned int mcr;
 	u16 wbaudrate;
 	u16 wflags = 0;
+
+	cflag = tty->termios.c_cflag;
+	iflag = tty->termios.c_iflag;
+
+	dev_dbg(&port->dev, "%s - cflag %08x, iflag %08x\n", __func__, cflag, iflag);
+	dev_dbg(&port->dev, "%s - old clfag %08x, old iflag %08x\n", __func__,
+		old_termios->c_cflag, old_termios->c_iflag);
 
 	config = kmalloc(sizeof(*config), GFP_KERNEL);
 	if (!config)
@@ -1425,6 +1428,9 @@ static int ti_get_serial_info(struct ti_port *tport,
 	struct usb_serial_port *port = tport->tp_port;
 	struct serial_struct ret_serial;
 	unsigned cwait;
+
+	if (!ret_arg)
+		return -EFAULT;
 
 	cwait = port->port.closing_wait;
 	if (cwait != ASYNC_CLOSING_WAIT_NONE)

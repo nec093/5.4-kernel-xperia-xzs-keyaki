@@ -55,8 +55,8 @@ static struct fsl_usb2_dev_data *get_dr_mode_data(struct device_node *np)
 				return &dr_mode_data[i];
 		}
 	}
-	pr_warn("%pOF: Invalid 'dr_mode' property, fallback to host mode\n",
-		np);
+	pr_warn("%s: Invalid 'dr_mode' property, fallback to host mode\n",
+		np->full_name);
 	return &dr_mode_data[0]; /* mode not specified, use host */
 }
 
@@ -98,13 +98,10 @@ static struct platform_device *fsl_usb2_device_register(
 
 	pdev->dev.coherent_dma_mask = ofdev->dev.coherent_dma_mask;
 
-	if (!pdev->dev.dma_mask) {
+	if (!pdev->dev.dma_mask)
 		pdev->dev.dma_mask = &ofdev->dev.coherent_dma_mask;
-	} else {
-		retval = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
-		if (retval)
-			goto error;
-	}
+	else
+		dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
 
 	retval = platform_device_add_data(pdev, pdata, sizeof(*pdata));
 	if (retval)
@@ -229,8 +226,6 @@ static int fsl_usb2_mph_dr_of_probe(struct platform_device *ofdev)
 		of_property_read_bool(np, "fsl,usb-erratum-a007792");
 	pdata->has_fsl_erratum_a005275 =
 		of_property_read_bool(np, "fsl,usb-erratum-a005275");
-	pdata->has_fsl_erratum_a005697 =
-		of_property_read_bool(np, "fsl,usb_erratum-a005697");
 
 	/*
 	 * Determine whether phy_clk_valid needs to be checked

@@ -18,7 +18,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/dma-mapping.h>
 #include <linux/usb/chipidea.h>
-#include <linux/usb/of.h>
 #include <linux/clk.h>
 
 #include "ci.h"
@@ -64,8 +63,7 @@ static const struct ci_hdrc_imx_platform_flag imx6sx_usb_data = {
 
 static const struct ci_hdrc_imx_platform_flag imx6ul_usb_data = {
 	.flags = CI_HDRC_SUPPORTS_RUNTIME_PM |
-		CI_HDRC_TURN_VBUS_EARLY_ON |
-		CI_HDRC_DISABLE_DEVICE_STREAMING,
+		CI_HDRC_TURN_VBUS_EARLY_ON,
 };
 
 static const struct ci_hdrc_imx_platform_flag imx7d_usb_data = {
@@ -134,13 +132,9 @@ static struct imx_usbmisc_data *usbmisc_get_init_data(struct device *dev)
 	misc_pdev = of_find_device_by_node(args.np);
 	of_node_put(args.np);
 
-	if (!misc_pdev)
+	if (!misc_pdev || !platform_get_drvdata(misc_pdev))
 		return ERR_PTR(-EPROBE_DEFER);
 
-	if (!platform_get_drvdata(misc_pdev)) {
-		put_device(&misc_pdev->dev);
-		return ERR_PTR(-EPROBE_DEFER);
-	}
 	data->dev = &misc_pdev->dev;
 
 	if (of_find_property(np, "disable-over-current", NULL))
@@ -151,9 +145,6 @@ static struct imx_usbmisc_data *usbmisc_get_init_data(struct device *dev)
 
 	if (of_find_property(np, "external-vbus-divider", NULL))
 		data->evdo = 1;
-
-	if (of_usb_get_phy_mode(np) == USBPHY_INTERFACE_MODE_ULPI)
-		data->ulpi = 1;
 
 	return data;
 }

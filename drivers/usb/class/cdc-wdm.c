@@ -26,6 +26,10 @@
 #include <asm/unaligned.h>
 #include <linux/usb/cdc-wdm.h>
 
+/*
+ * Version Information
+ */
+#define DRIVER_VERSION "v0.03"
 #define DRIVER_AUTHOR "Oliver Neukum"
 #define DRIVER_DESC "USB Abstract Control Model driver for USB WCM Device Management"
 
@@ -56,9 +60,6 @@ MODULE_DEVICE_TABLE (usb, wdm_ids);
 #define WDM_OVERFLOW		10
 
 #define WDM_MAX			16
-
-/* we cannot wait forever at flush() */
-#define WDM_FLUSH_TIMEOUT	(30 * HZ)
 
 /* CDC-WMC r1.1 requires wMaxCommand to be "at least 256 decimal (0x100)" */
 #define WDM_DEFAULT_BUFSIZE	256
@@ -150,7 +151,7 @@ static void wdm_out_callback(struct urb *urb)
 	kfree(desc->outbuf);
 	desc->outbuf = NULL;
 	clear_bit(WDM_IN_USE, &desc->flags);
-	wake_up_all(&desc->wait);
+	wake_up(&desc->wait);
 }
 
 /* forward declaration */
@@ -362,9 +363,17 @@ static ssize_t wdm_write
 	if (we < 0)
 		return usb_translate_errors(we);
 
-	buf = memdup_user(buffer, count);
-	if (IS_ERR(buf))
-		return PTR_ERR(buf);
+	buf = kmalloc(count, GFP_KERNEL);
+	if (!buf) {
+		rv = -ENOMEM;
+		goto outnl;
+	}
+
+	r = copy_from_user(buf, buffer, count);
+	if (r > 0) {
+		rv = -EFAULT;
+		goto out_free_mem;
+	}
 
 	/* concurrent writes and disconnect */
 	r = mutex_lock_interruptible(&desc->wlock);
@@ -392,9 +401,6 @@ static ssize_t wdm_write
 
 	if (test_bit(WDM_RESETTING, &desc->flags))
 		r = -EIO;
-
-	if (test_bit(WDM_DISCONNECTING, &desc->flags))
-		r = -ENODEV;
 
 	if (r < 0) {
 		rv = r;
@@ -427,7 +433,6 @@ static ssize_t wdm_write
 	if (rv < 0) {
 		desc->outbuf = NULL;
 		clear_bit(WDM_IN_USE, &desc->flags);
-		wake_up_all(&desc->wait); /* for wdm_wait_for_response() */
 		dev_err(&desc->intf->dev, "Tx URB error: %d\n", rv);
 		rv = usb_translate_errors(rv);
 		goto out_free_mem_pm;
@@ -438,7 +443,8 @@ static ssize_t wdm_write
 
 	usb_autopm_put_interface(desc->intf);
 	mutex_unlock(&desc->wlock);
-	return count;
+outnl:
+	return rv < 0 ? rv : count;
 
 out_free_mem_pm:
 	usb_autopm_put_interface(desc->intf);
@@ -506,7 +512,7 @@ retry:
 		i++;
 		if (file->f_flags & O_NONBLOCK) {
 			if (!test_bit(WDM_READ, &desc->flags)) {
-				rv = -EAGAIN;
+				rv = cntr ? cntr : -EAGAIN;
 				goto err;
 			}
 			rv = 0;
@@ -587,58 +593,28 @@ err:
 	return rv;
 }
 
-static int wdm_wait_for_response(struct file *file, long timeout)
-{
-	struct wdm_device *desc = file->private_data;
-	long rv; /* Use long here because (int) MAX_SCHEDULE_TIMEOUT < 0. */
-
-	/*
-	 * Needs both flags. We cannot do with one because resetting it would
-	 * cause a race with write() yet we need to signal a disconnect.
-	 */
-	rv = wait_event_interruptible_timeout(desc->wait,
-			      !test_bit(WDM_IN_USE, &desc->flags) ||
-			      test_bit(WDM_DISCONNECTING, &desc->flags),
-			      timeout);
-
-	/*
-	 * To report the correct error. This is best effort.
-	 * We are inevitably racing with the hardware.
-	 */
-	if (test_bit(WDM_DISCONNECTING, &desc->flags))
-		return -ENODEV;
-	if (!rv)
-		return -EIO;
-	if (rv < 0)
-		return -EINTR;
-
-	spin_lock_irq(&desc->iuspin);
-	rv = desc->werr;
-	desc->werr = 0;
-	spin_unlock_irq(&desc->iuspin);
-
-	return usb_translate_errors(rv);
-
-}
-
-/*
- * You need to send a signal when you react to malicious or defective hardware.
- * Also, don't abort when fsync() returned -EINVAL, for older kernels which do
- * not implement wdm_flush() will return -EINVAL.
- */
-static int wdm_fsync(struct file *file, loff_t start, loff_t end, int datasync)
-{
-	return wdm_wait_for_response(file, MAX_SCHEDULE_TIMEOUT);
-}
-
-/*
- * Same with wdm_fsync(), except it uses finite timeout in order to react to
- * malicious or defective hardware which ceased communication after close() was
- * implicitly called due to process termination.
- */
 static int wdm_flush(struct file *file, fl_owner_t id)
 {
-	return wdm_wait_for_response(file, WDM_FLUSH_TIMEOUT);
+	struct wdm_device *desc = file->private_data;
+
+	wait_event(desc->wait,
+			/*
+			 * needs both flags. We cannot do with one
+			 * because resetting it would cause a race
+			 * with write() yet we need to signal
+			 * a disconnect
+			 */
+			!test_bit(WDM_IN_USE, &desc->flags) ||
+			test_bit(WDM_DISCONNECTING, &desc->flags));
+
+	/* cannot dereference desc->intf if WDM_DISCONNECTING */
+	if (test_bit(WDM_DISCONNECTING, &desc->flags))
+		return -ENODEV;
+	if (desc->werr < 0)
+		dev_err(&desc->intf->dev, "Error in flush path: %d\n",
+			desc->werr);
+
+	return usb_translate_errors(desc->werr);
 }
 
 static unsigned int wdm_poll(struct file *file, struct poll_table_struct *wait)
@@ -731,7 +707,6 @@ static int wdm_release(struct inode *inode, struct file *file)
 			kill_urbs(desc);
 			spin_lock_irq(&desc->iuspin);
 			desc->resp_count = 0;
-			clear_bit(WDM_RESPONDING, &desc->flags);
 			spin_unlock_irq(&desc->iuspin);
 			desc->manage_power(desc->intf, 0);
 		} else {
@@ -764,7 +739,6 @@ static const struct file_operations wdm_fops = {
 	.owner =	THIS_MODULE,
 	.read =		wdm_read,
 	.write =	wdm_write,
-	.fsync =	wdm_fsync,
 	.open =		wdm_open,
 	.flush =	wdm_flush,
 	.release =	wdm_release,

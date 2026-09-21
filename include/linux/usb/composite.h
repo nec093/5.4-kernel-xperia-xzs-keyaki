@@ -63,9 +63,6 @@
 /* OS feature descriptor length <= 4kB */
 #define USB_COMP_EP0_OS_DESC_BUFSIZ	4096
 
-/* OS feature descriptor length <= 4kB */
-#define USB_COMP_EP0_OS_DESC_BUFSIZ	4096
-
 #define USB_MS_TO_HS_INTERVAL(x)	(ilog2((x * 1000 / 125)) + 1)
 struct usb_configuration;
 
@@ -272,9 +269,6 @@ int usb_interface_id(struct usb_configuration *, struct usb_function *);
 int usb_func_wakeup(struct usb_function *func);
 
 int usb_get_func_interface_id(struct usb_function *func);
-
-int config_ep_by_speed_and_alt(struct usb_gadget *g, struct usb_function *f,
-				struct usb_ep *_ep, u8 alt);
 
 int config_ep_by_speed_and_alt(struct usb_gadget *g, struct usb_function *f,
 				struct usb_ep *_ep, u8 alt);
@@ -489,7 +483,6 @@ static inline struct usb_composite_driver *to_cdriver(
  * sure doing that won't hurt too much.
  *
  * One notion for how to handle Wireless USB devices involves:
- *
  * (a) a second gadget here, discovery mechanism TBD, but likely
  *     needing separate "register/unregister WUSB gadget" calls;
  * (b) updates to usb_gadget to include flags "is it wireless",
@@ -542,9 +535,8 @@ struct usb_composite_dev {
 	/* protects deactivations and delayed_status counts*/
 	spinlock_t			lock;
 
-	/* public: */
-	unsigned int			setup_pending:1;
-	unsigned int			os_desc_pending:1;
+	unsigned			setup_pending:1;
+	unsigned			os_desc_pending:1;
 };
 
 extern int usb_string_id(struct usb_composite_dev *c);

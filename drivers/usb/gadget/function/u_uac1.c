@@ -18,7 +18,7 @@
 #include <linux/random.h>
 #include <linux/syscalls.h>
 
-#include "u_uac1_legacy.h"
+#include "u_uac1.h"
 
 /*
  * This component encapsulates the ALSA devices for USB audio gadget
@@ -157,6 +157,7 @@ size_t u_audio_playback(struct gaudio *card, void *buf, size_t count)
 	struct gaudio_snd_dev	*snd = &card->playback;
 	struct snd_pcm_substream *substream = snd->substream;
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	mm_segment_t old_fs;
 	ssize_t result;
 	snd_pcm_sframes_t frames;
 
@@ -173,11 +174,15 @@ try_again:
 	}
 
 	frames = bytes_to_frames(runtime, count);
-	result = snd_pcm_kernel_write(snd->substream, buf, frames);
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	result = snd_pcm_lib_write(snd->substream, (void __user *)buf, frames);
 	if (result != frames) {
 		ERROR(card, "Playback error: %d\n", (int)result);
+		set_fs(old_fs);
 		goto try_again;
 	}
+	set_fs(old_fs);
 
 	return 0;
 }
@@ -200,11 +205,10 @@ static int gaudio_open_snd_dev(struct gaudio *card)
 {
 	struct snd_pcm_file *pcm_file;
 	struct gaudio_snd_dev *snd;
-	struct f_uac1_legacy_opts *opts;
+	struct f_uac1_opts *opts;
 	char *fn_play, *fn_cap, *fn_cntl;
 
-	opts = container_of(card->func.fi, struct f_uac1_legacy_opts,
-			    func_inst);
+	opts = container_of(card->func.fi, struct f_uac1_opts, func_inst);
 	fn_play = opts->fn_play;
 	fn_cap = opts->fn_cap;
 	fn_cntl = opts->fn_cntl;

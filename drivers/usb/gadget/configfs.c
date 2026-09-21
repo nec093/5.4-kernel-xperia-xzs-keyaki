@@ -494,6 +494,7 @@ static void config_usb_cfg_unlink(
 	}
 	mutex_unlock(&gi->lock);
 	WARN(1, "Unable to locate function to unbind\n");
+	return;
 }
 
 static struct configfs_item_operations gadget_config_item_ops = {
@@ -789,7 +790,7 @@ static inline struct gadget_info *os_desc_item_to_gadget_info(
 
 static ssize_t os_desc_use_show(struct config_item *item, char *page)
 {
-	return sprintf(page, "%d\n",
+	return sprintf(page, "%d",
 			os_desc_item_to_gadget_info(item)->use_os_desc);
 }
 
@@ -813,7 +814,7 @@ static ssize_t os_desc_use_store(struct config_item *item, const char *page,
 
 static ssize_t os_desc_b_vendor_code_show(struct config_item *item, char *page)
 {
-	return sprintf(page, "0x%02x\n",
+	return sprintf(page, "%d",
 			os_desc_item_to_gadget_info(item)->b_vendor_code);
 }
 
@@ -838,13 +839,9 @@ static ssize_t os_desc_b_vendor_code_store(struct config_item *item,
 static ssize_t os_desc_qw_sign_show(struct config_item *item, char *page)
 {
 	struct gadget_info *gi = os_desc_item_to_gadget_info(item);
-	int res;
 
-	res = utf16s_to_utf8s((wchar_t *) gi->qw_sign, OS_STRING_QW_SIGN_LEN,
-			      UTF16_LITTLE_ENDIAN, page, PAGE_SIZE - 1);
-	page[res++] = '\n';
-
-	return res;
+	memcpy(page, gi->qw_sign, OS_STRING_QW_SIGN_LEN);
+	return OS_STRING_QW_SIGN_LEN;
 }
 
 static ssize_t os_desc_qw_sign_store(struct config_item *item, const char *page,
@@ -933,6 +930,7 @@ static void os_desc_unlink(struct config_item *os_desc_ci,
 	cdev->os_desc_config = NULL;
 	WARN_ON(gi->composite.gadget_driver.udc_name);
 	mutex_unlock(&gi->lock);
+	return;
 }
 
 static struct configfs_item_operations os_desc_ops = {
@@ -955,7 +953,7 @@ static inline struct usb_os_desc_ext_prop
 
 static ssize_t ext_prop_type_show(struct config_item *item, char *page)
 {
-	return sprintf(page, "%d\n", to_usb_os_desc_ext_prop(item)->type);
+	return sprintf(page, "%d", to_usb_os_desc_ext_prop(item)->type);
 }
 
 static ssize_t ext_prop_type_store(struct config_item *item,

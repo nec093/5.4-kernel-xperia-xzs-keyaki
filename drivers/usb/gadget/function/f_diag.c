@@ -226,10 +226,10 @@ static inline int kref_put_spinlock_irqsave(struct kref *kref,
 	unsigned long flags;
 
 	WARN_ON(release == NULL);
-	if (atomic_add_unless(&kref->refcount, -1, 1))
+	if (refcount_dec_not_one(&kref->refcount))
 		return 0;
 	spin_lock_irqsave(lock, flags);
-	if (atomic_dec_and_test(&kref->refcount)) {
+	if (refcount_dec_and_test(&kref->refcount)) {
 		release(kref);
 		local_irq_restore(flags);
 		return 1;

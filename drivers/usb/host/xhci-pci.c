@@ -38,7 +38,6 @@
 #define PCI_VENDOR_ID_FRESCO_LOGIC	0x1b73
 #define PCI_DEVICE_ID_FRESCO_LOGIC_PDK	0x1000
 #define PCI_DEVICE_ID_FRESCO_LOGIC_FL1009	0x1009
-#define PCI_DEVICE_ID_FRESCO_LOGIC_FL1100	0x1100
 #define PCI_DEVICE_ID_FRESCO_LOGIC_FL1400	0x1400
 
 #define PCI_VENDOR_ID_ETRON		0x1b6f
@@ -56,15 +55,7 @@
 #define PCI_DEVICE_ID_INTEL_DNV_XHCI			0x19d0
 #define PCI_DEVICE_ID_INTEL_CML_XHCI			0xa3af
 
-#define PCI_DEVICE_ID_AMD_PROMONTORYA_4			0x43b9
-#define PCI_DEVICE_ID_AMD_PROMONTORYA_3			0x43ba
-#define PCI_DEVICE_ID_AMD_PROMONTORYA_2			0x43bb
-#define PCI_DEVICE_ID_AMD_PROMONTORYA_1			0x43bc
-#define PCI_DEVICE_ID_ASMEDIA_1042_XHCI			0x1042
 #define PCI_DEVICE_ID_ASMEDIA_1042A_XHCI		0x1142
-#define PCI_DEVICE_ID_ASMEDIA_1142_XHCI			0x1242
-#define PCI_DEVICE_ID_ASMEDIA_2142_XHCI			0x2142
-#define PCI_DEVICE_ID_ASMEDIA_3242_XHCI			0x3242
 
 static const char hcd_name[] = "xhci_hcd";
 
@@ -134,10 +125,6 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 			pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1009)
 		xhci->quirks |= XHCI_BROKEN_STREAMS;
 
-	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
-			pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100)
-		xhci->quirks |= XHCI_TRUST_TX_LENGTH;
-
 	if (pdev->vendor == PCI_VENDOR_ID_NEC)
 		xhci->quirks |= XHCI_NEC_HOST;
 
@@ -148,26 +135,8 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 	if (pdev->vendor == PCI_VENDOR_ID_AMD && usb_amd_find_chipset_info())
 		xhci->quirks |= XHCI_AMD_PLL_FIX;
 
-	if (pdev->vendor == PCI_VENDOR_ID_AMD &&
-		(pdev->device == 0x145c ||
-		 pdev->device == 0x15e0 ||
-		 pdev->device == 0x15e1 ||
-		 pdev->device == 0x43bb))
-		xhci->quirks |= XHCI_SUSPEND_DELAY;
-
-	if (pdev->vendor == PCI_VENDOR_ID_AMD &&
-	    (pdev->device == 0x15e0 || pdev->device == 0x15e1))
-		xhci->quirks |= XHCI_SNPS_BROKEN_SUSPEND;
-
 	if (pdev->vendor == PCI_VENDOR_ID_AMD)
 		xhci->quirks |= XHCI_TRUST_TX_LENGTH;
-
-	if ((pdev->vendor == PCI_VENDOR_ID_AMD) &&
-		((pdev->device == PCI_DEVICE_ID_AMD_PROMONTORYA_4) ||
-		(pdev->device == PCI_DEVICE_ID_AMD_PROMONTORYA_3) ||
-		(pdev->device == PCI_DEVICE_ID_AMD_PROMONTORYA_2) ||
-		(pdev->device == PCI_DEVICE_ID_AMD_PROMONTORYA_1)))
-		xhci->quirks |= XHCI_U2_DISABLE_WAKE;
 
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL) {
 		xhci->quirks |= XHCI_LPM_SUPPORT;
@@ -239,24 +208,11 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 		xhci->quirks |= XHCI_BROKEN_STREAMS;
 
 	if (pdev->vendor == PCI_VENDOR_ID_ASMEDIA &&
-		pdev->device == PCI_DEVICE_ID_ASMEDIA_1042_XHCI) {
-		/*
-		 * try to tame the ASMedia 1042 controller which reports 0.96
-		 * but appears to behave more like 1.0
-		 */
-		xhci->quirks |= XHCI_SPURIOUS_SUCCESS;
+			pdev->device == 0x1042)
 		xhci->quirks |= XHCI_BROKEN_STREAMS;
-	}
 	if (pdev->vendor == PCI_VENDOR_ID_ASMEDIA &&
-		pdev->device == PCI_DEVICE_ID_ASMEDIA_1042A_XHCI) {
+			pdev->device == 0x1142)
 		xhci->quirks |= XHCI_TRUST_TX_LENGTH;
-		xhci->quirks |= XHCI_NO_64BIT_SUPPORT;
-	}
-	if (pdev->vendor == PCI_VENDOR_ID_ASMEDIA &&
-	    (pdev->device == PCI_DEVICE_ID_ASMEDIA_1142_XHCI ||
-	     pdev->device == PCI_DEVICE_ID_ASMEDIA_2142_XHCI ||
-	     pdev->device == PCI_DEVICE_ID_ASMEDIA_3242_XHCI))
-		xhci->quirks |= XHCI_NO_64BIT_SUPPORT;
 
 	if (pdev->vendor == PCI_VENDOR_ID_ASMEDIA &&
 		pdev->device == PCI_DEVICE_ID_ASMEDIA_1042A_XHCI)
@@ -264,11 +220,6 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 
 	if (pdev->vendor == PCI_VENDOR_ID_TI && pdev->device == 0x8241)
 		xhci->quirks |= XHCI_LIMIT_ENDPOINT_INTERVAL_7;
-
-	if ((pdev->vendor == PCI_VENDOR_ID_BROADCOM ||
-	     pdev->vendor == PCI_VENDOR_ID_CAVIUM) &&
-	     pdev->device == 0x9026)
-		xhci->quirks |= XHCI_RESET_PLL_ON_DISCONNECT;
 
 	if (xhci->quirks & XHCI_RESET_ON_RESUME)
 		xhci_dbg_trace(xhci, trace_xhci_dbg_quirks,
@@ -278,12 +229,13 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
 #ifdef CONFIG_ACPI
 static void xhci_pme_acpi_rtd3_enable(struct pci_dev *dev)
 {
-	static const guid_t intel_dsm_guid =
-		GUID_INIT(0xac340cb7, 0xe901, 0x45bf,
-			  0xb7, 0xe6, 0x2b, 0x34, 0xec, 0x93, 0x1e, 0x23);
+	static const u8 intel_dsm_uuid[] = {
+		0xb7, 0x0c, 0x34, 0xac,	0x01, 0xe9, 0xbf, 0x45,
+		0xb7, 0xe6, 0x2b, 0x34, 0xec, 0x93, 0x1e, 0x23,
+	};
 	union acpi_object *obj;
 
-	obj = acpi_evaluate_dsm(ACPI_HANDLE(&dev->dev), &intel_dsm_guid, 3, 1,
+	obj = acpi_evaluate_dsm(ACPI_HANDLE(&dev->dev), intel_dsm_uuid, 3, 1,
 				NULL);
 	ACPI_FREE(obj);
 }
@@ -309,13 +261,14 @@ static int xhci_pci_setup(struct usb_hcd *hcd)
 	if (!usb_hcd_is_primary_hcd(hcd))
 		return 0;
 
-	if (xhci->quirks & XHCI_PME_STUCK_QUIRK)
-		xhci_pme_acpi_rtd3_enable(pdev);
-
 	xhci_dbg(xhci, "Got SBRN %u\n", (unsigned int) xhci->sbrn);
 
 	/* Find any debug ports */
-	return xhci_pci_reinit(xhci, pdev);
+	retval = xhci_pci_reinit(xhci, pdev);
+	if (!retval)
+		return retval;
+
+	return retval;
 }
 
 /*
@@ -330,13 +283,6 @@ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	struct usb_hcd *hcd;
 
 	driver = (struct hc_driver *)id->driver_data;
-
-	/* For some HW implementation, a XHCI reset is just not enough... */
-	if (usb_xhci_needs_pci_reset(dev)) {
-		dev_info(&dev->dev, "Resetting\n");
-		if (pci_reset_function_locked(dev))
-			dev_warn(&dev->dev, "Reset failed");
-	}
 
 	/* Prevent runtime suspending between USB-2 and USB-3 initialization */
 	pm_runtime_get_noresume(&dev->dev);
@@ -372,10 +318,11 @@ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			HCC_MAX_PSA(xhci->hcc_params) >= 4)
 		xhci->shared_hcd->can_do_streams = 1;
 
+	if (xhci->quirks & XHCI_PME_STUCK_QUIRK)
+		xhci_pme_acpi_rtd3_enable(dev);
+
 	/* USB-2 and USB-3 roothubs initialized, allow runtime pm suspend */
 	pm_runtime_put_noidle(&dev->dev);
-
-	dma_set_max_seg_size(&dev->dev, UINT_MAX);
 
 	return 0;
 
@@ -397,7 +344,6 @@ static void xhci_pci_remove(struct pci_dev *dev)
 	if (xhci->shared_hcd) {
 		usb_remove_hcd(xhci->shared_hcd);
 		usb_put_hcd(xhci->shared_hcd);
-		xhci->shared_hcd = NULL;
 	}
 
 	/* Workaround for spurious wakeups at shutdown with HSW */

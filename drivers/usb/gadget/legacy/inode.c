@@ -20,14 +20,13 @@
 #include <linux/uts.h>
 #include <linux/wait.h>
 #include <linux/compiler.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/mmu_context.h>
 #include <linux/aio.h>
 #include <linux/uio.h>
-#include <linux/refcount.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/moduleparam.h>
@@ -85,7 +84,8 @@ static int ep_open(struct inode *, struct file *);
 
 /* /dev/gadget/$CHIP represents ep0 and the whole device */
 enum ep0_state {
-	/* DISABLED is the initial state. */
+	/* DISBLED is the initial state.
+	 */
 	STATE_DEV_DISABLED = 0,
 
 	/* Only one open() of /dev/gadget/$CHIP; only one file tracks
@@ -113,11 +113,9 @@ enum ep0_state {
 /* enough for the whole queue: most events invalidate others */
 #define	N_EVENT			5
 
-#define RBUF_SIZE		256
-
 struct dev_data {
 	spinlock_t			lock;
-	refcount_t			count;
+	atomic_t			count;
 	int				udc_usage;
 	enum ep0_state			state;		/* P: lock */
 	struct usb_gadgetfs_event	event [N_EVENT];
@@ -149,17 +147,17 @@ struct dev_data {
 	struct dentry			*dentry;
 
 	/* except this scratch i/o buffer for ep0 */
-	u8				rbuf[RBUF_SIZE];
+	u8				rbuf [256];
 };
 
 static inline void get_dev (struct dev_data *data)
 {
-	refcount_inc (&data->count);
+	atomic_inc (&data->count);
 }
 
 static void put_dev (struct dev_data *data)
 {
-	if (likely (!refcount_dec_and_test (&data->count)))
+	if (likely (!atomic_dec_and_test (&data->count)))
 		return;
 	/* needs no more cleanup */
 	BUG_ON (waitqueue_active (&data->wait));
@@ -174,7 +172,7 @@ static struct dev_data *dev_new (void)
 	if (!dev)
 		return NULL;
 	dev->state = STATE_DEV_DISABLED;
-	refcount_set (&dev->count, 1);
+	atomic_set (&dev->count, 1);
 	spin_lock_init (&dev->lock);
 	INIT_LIST_HEAD (&dev->epfiles);
 	init_waitqueue_head (&dev->wait);
@@ -194,7 +192,7 @@ enum ep_state {
 struct ep_data {
 	struct mutex			lock;
 	enum ep_state			state;
-	refcount_t			count;
+	atomic_t			count;
 	struct dev_data			*dev;
 	/* must hold dev->lock before accessing ep or req */
 	struct usb_ep			*ep;
@@ -209,12 +207,12 @@ struct ep_data {
 
 static inline void get_ep (struct ep_data *data)
 {
-	refcount_inc (&data->count);
+	atomic_inc (&data->count);
 }
 
 static void put_ep (struct ep_data *data)
 {
-	if (likely (!refcount_dec_and_test (&data->count)))
+	if (likely (!atomic_dec_and_test (&data->count)))
 		return;
 	put_dev (data->dev);
 	/* needs no more cleanup */
@@ -365,7 +363,6 @@ ep_io (struct ep_data *epdata, void *buf, unsigned len)
 				spin_unlock_irq (&epdata->dev->lock);
 
 				DBG (epdata->dev, "endpoint gone\n");
-				wait_for_completion(&done);
 				epdata->status = -ENODEV;
 			}
 		}
@@ -671,7 +668,7 @@ ep_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		return -ENOMEM;
 	}
 
-	if (unlikely(!copy_from_iter_full(buf, len, from))) {
+	if (unlikely(copy_from_iter(buf, len, from) != len)) {
 		value = -EFAULT;
 		goto out;
 	}
@@ -1339,18 +1336,6 @@ gadgetfs_setup (struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	u16				w_value = le16_to_cpu(ctrl->wValue);
 	u16				w_length = le16_to_cpu(ctrl->wLength);
 
-	if (w_length > RBUF_SIZE) {
-		if (ctrl->bRequestType & USB_DIR_IN) {
-			/* Cast away the const, we are going to overwrite on purpose. */
-			__le16 *temp = (__le16 *)&ctrl->wLength;
-
-			*temp = cpu_to_le16(RBUF_SIZE);
-			w_length = RBUF_SIZE;
-		} else {
-			return value;
-		}
-	}
-
 	spin_lock (&dev->lock);
 	dev->setup_abort = 0;
 	if (dev->state == STATE_DEV_UNCONNECTED) {
@@ -1607,7 +1592,7 @@ static int activate_ep_files (struct dev_data *dev)
 		init_waitqueue_head (&data->wait);
 
 		strncpy (data->name, ep->name, sizeof (data->name) - 1);
-		refcount_set (&data->count, 1);
+		atomic_set (&data->count, 1);
 		data->dev = dev;
 		get_dev (dev);
 
@@ -1834,9 +1819,8 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 	spin_lock_irq (&dev->lock);
 	value = -EINVAL;
 	if (dev->buf) {
-		spin_unlock_irq(&dev->lock);
 		kfree(kbuf);
-		return value;
+		goto fail;
 	}
 	dev->buf = kbuf;
 
@@ -1872,6 +1856,7 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 			|| dev->dev->bDescriptorType != USB_DT_DEVICE
 			|| dev->dev->bNumConfigurations != 1)
 		goto fail;
+	dev->dev->bNumConfigurations = 1;
 	dev->dev->bcdUSB = cpu_to_le16 (0x0200);
 
 	/* triggers gadgetfs_bind(); then we can enumerate. */
@@ -1883,8 +1868,8 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 
 	value = usb_gadget_probe_driver(&gadgetfs_driver);
 	if (value != 0) {
-		spin_lock_irq(&dev->lock);
-		goto fail;
+		kfree (dev->buf);
+		dev->buf = NULL;
 	} else {
 		/* at this point "good" hardware has for the first time
 		 * let the USB the host see us.  alternatively, if users
@@ -1901,11 +1886,8 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 	return value;
 
 fail:
-	dev->config = NULL;
-	dev->hs_config = NULL;
-	dev->dev = NULL;
 	spin_unlock_irq (&dev->lock);
-	pr_debug ("%s: %s fail %zd, %p\n", shortname, __func__, value, dev);
+	pr_debug ("%s: %s fail %Zd, %p\n", shortname, __func__, value, dev);
 	kfree (dev->buf);
 	dev->buf = NULL;
 	return value;
@@ -2063,9 +2045,6 @@ gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 	return 0;
 
 Enomem:
-	kfree(CHIP);
-	CHIP = NULL;
-
 	return -ENOMEM;
 }
 

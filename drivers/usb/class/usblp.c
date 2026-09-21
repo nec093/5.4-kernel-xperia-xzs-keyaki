@@ -49,7 +49,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
@@ -289,29 +289,12 @@ static int usblp_ctrl_msg(struct usblp *usblp, int request, int type, int dir, i
 #define usblp_reset(usblp)\
 	usblp_ctrl_msg(usblp, USBLP_REQ_RESET, USB_TYPE_CLASS, USB_DIR_OUT, USB_RECIP_OTHER, 0, NULL, 0)
 
-static int usblp_hp_channel_change_request(struct usblp *usblp, int channel, u8 *new_channel)
-{
-	u8 *buf;
-	int ret;
-
-	buf = kzalloc(1, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	ret = usblp_ctrl_msg(usblp, USBLP_REQ_HP_CHANNEL_CHANGE_REQUEST,
-			USB_TYPE_VENDOR, USB_DIR_IN, USB_RECIP_INTERFACE,
-			channel, buf, 1);
-	if (ret == 0)
-		*new_channel = buf[0];
-
-	kfree(buf);
-
-	return ret;
-}
+#define usblp_hp_channel_change_request(usblp, channel, buffer) \
+	usblp_ctrl_msg(usblp, USBLP_REQ_HP_CHANNEL_CHANGE_REQUEST, USB_TYPE_VENDOR, USB_DIR_IN, USB_RECIP_INTERFACE, channel, buffer, 1)
 
 /*
  * See the description for usblp_select_alts() below for the usage
- * explanation.  Look into your /sys/kernel/debug/usb/devices and dmesg in
+ * explanation.  Look into your /proc/bus/usb/devices and dmesg in
  * case of any trouble.
  */
 static int proto_bias = -1;
@@ -857,11 +840,6 @@ static ssize_t usblp_read(struct file *file, char __user *buffer, size_t len, lo
 	if (rv < 0)
 		return rv;
 
-	if (!usblp->present) {
-		count = -ENODEV;
-		goto done;
-	}
-
 	if ((avail = usblp->rstatus) < 0) {
 		printk(KERN_ERR "usblp%d: error %d reading from printer\n",
 		    usblp->minor, (int)avail);
@@ -1266,9 +1244,8 @@ static int usblp_select_alts(struct usblp *usblp)
 {
 	struct usb_interface *if_alt;
 	struct usb_host_interface *ifd;
-	struct usb_endpoint_descriptor *epwrite, *epread;
-	int p, i;
-	int res;
+	struct usb_endpoint_descriptor *epd, *epwrite, *epread;
+	int p, i, e;
 
 	if_alt = usblp->intf;
 
@@ -1288,21 +1265,31 @@ static int usblp_select_alts(struct usblp *usblp)
 		    ifd->desc.bInterfaceProtocol > USBLP_LAST_PROTOCOL)
 			continue;
 
-		/* Look for the expected bulk endpoints. */
-		if (ifd->desc.bInterfaceProtocol > 1) {
-			res = usb_find_common_endpoints(ifd,
-					&epread, &epwrite, NULL, NULL);
-		} else {
-			epread = NULL;
-			res = usb_find_bulk_out_endpoint(ifd, &epwrite);
+		/* Look for bulk OUT and IN endpoints. */
+		epwrite = epread = NULL;
+		for (e = 0; e < ifd->desc.bNumEndpoints; e++) {
+			epd = &ifd->endpoint[e].desc;
+
+			if (usb_endpoint_is_bulk_out(epd))
+				if (!epwrite)
+					epwrite = epd;
+
+			if (usb_endpoint_is_bulk_in(epd))
+				if (!epread)
+					epread = epd;
 		}
 
 		/* Ignore buggy hardware without the right endpoints. */
-		if (res)
+		if (!epwrite || (ifd->desc.bInterfaceProtocol > 1 && !epread))
 			continue;
 
-		/* Turn off reads for buggy bidirectional printers. */
-		if (usblp->quirks & USBLP_QUIRK_BIDIR) {
+		/*
+		 * Turn off reads for USB_CLASS_PRINTER/1/1 (unidirectional)
+		 * interfaces and buggy bidirectional printers.
+		 */
+		if (ifd->desc.bInterfaceProtocol == 1) {
+			epread = NULL;
+		} else if (usblp->quirks & USBLP_QUIRK_BIDIR) {
 			printk(KERN_INFO "usblp%d: Disabling reads from "
 			    "problematic bidirectional printer\n",
 			    usblp->minor);
@@ -1340,17 +1327,14 @@ static int usblp_set_protocol(struct usblp *usblp, int protocol)
 	if (protocol < USBLP_FIRST_PROTOCOL || protocol > USBLP_LAST_PROTOCOL)
 		return -EINVAL;
 
-	/* Don't unnecessarily set the interface if there's a single alt. */
-	if (usblp->intf->num_altsetting > 1) {
-		alts = usblp->protocol[protocol].alt_setting;
-		if (alts < 0)
-			return -EINVAL;
-		r = usb_set_interface(usblp->dev, usblp->ifnum, alts);
-		if (r < 0) {
-			printk(KERN_ERR "usblp: can't set desired altsetting %d on interface %d\n",
-				alts, usblp->ifnum);
-			return r;
-		}
+	alts = usblp->protocol[protocol].alt_setting;
+	if (alts < 0)
+		return -EINVAL;
+	r = usb_set_interface(usblp->dev, usblp->ifnum, alts);
+	if (r < 0) {
+		printk(KERN_ERR "usblp: can't set desired altsetting %d on interface %d\n",
+			alts, usblp->ifnum);
+		return r;
 	}
 
 	usblp->bidir = (usblp->protocol[protocol].epread != NULL);

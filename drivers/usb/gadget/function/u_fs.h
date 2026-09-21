@@ -20,7 +20,6 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
-#include <linux/refcount.h>
 
 #ifdef VERBOSE_DEBUG
 #ifndef pr_vdebug
@@ -40,15 +39,14 @@
 struct f_fs_opts;
 
 struct ffs_dev {
-	struct ffs_data *ffs_data;
-	struct f_fs_opts *opts;
-	struct list_head entry;
-
-	char name[41];
-
+	const char *name;
+	bool name_allocated;
 	bool mounted;
 	bool desc_ready;
 	bool single;
+	struct ffs_data *ffs_data;
+	struct f_fs_opts *opts;
+	struct list_head entry;
 
 	int (*ffs_ready_callback)(struct ffs_data *ffs);
 	void (*ffs_closed_callback)(struct ffs_data *ffs);
@@ -180,7 +178,7 @@ struct ffs_data {
 	struct completion		epin_completion;
 	struct completion		epout_completion;
 	/* reference counter */
-	refcount_t			ref;
+	atomic_t			ref;
 	/* how many files are opened (EP0 and others) */
 	atomic_t			opened;
 
@@ -217,9 +215,6 @@ struct ffs_data {
 #define FFS_FL_CALL_CLOSED_CALLBACK 0
 #define FFS_FL_BOUND                1
 
-	/* For waking up blocked threads when function is enabled. */
-	wait_queue_head_t		wait;
-
 	/* Active function */
 	struct ffs_function		*func;
 
@@ -253,8 +248,7 @@ struct ffs_data {
 
 	unsigned			user_flags;
 
-#define FFS_MAX_EPS_COUNT 31
-	u8				eps_addrmap[FFS_MAX_EPS_COUNT];
+	u8				eps_addrmap[15];
 
 	unsigned short			strings_count;
 	unsigned short			interfaces_count;
@@ -280,7 +274,6 @@ struct ffs_data {
 	}				file_perms;
 
 	struct eventfd_ctx *ffs_eventfd;
-	struct workqueue_struct *io_completion_wq;
 	bool no_disconnect;
 	struct work_struct reset_work;
 

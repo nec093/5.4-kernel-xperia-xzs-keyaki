@@ -44,7 +44,7 @@ u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
 		else
 			val &= ~OTGSC_BSVIS;
 
-		if (cable->connected)
+		if (cable->state)
 			val |= OTGSC_BSV;
 		else
 			val &= ~OTGSC_BSV;
@@ -62,10 +62,10 @@ u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
 		else
 			val &= ~OTGSC_IDIS;
 
-		if (cable->connected)
-			val &= ~OTGSC_ID; /* host */
+		if (cable->state)
+			val |= OTGSC_ID;
 		else
-			val |= OTGSC_ID; /* device */
+			val &= ~OTGSC_ID;
 
 		if (cable->enabled)
 			val |= OTGSC_IDIE;
@@ -167,10 +167,8 @@ static int hw_wait_vbus_lower_bsv(struct ci_hdrc *ci)
 
 static void ci_handle_id_switch(struct ci_hdrc *ci)
 {
-	enum ci_role role;
+	enum ci_role role = ci_otg_role(ci);
 
-	mutex_lock(&ci->mutex);
-	role = ci_otg_role(ci);
 	if (role != ci->role) {
 		dev_dbg(ci->dev, "switching from %s to %s\n",
 			ci_role(ci)->name, ci->roles[role]->name);
@@ -193,7 +191,6 @@ static void ci_handle_id_switch(struct ci_hdrc *ci)
 		if (role == CI_ROLE_GADGET)
 			ci_handle_vbus_change(ci);
 	}
-	mutex_unlock(&ci->mutex);
 }
 /**
  * ci_otg_work - perform otg (vbus/id) event handle
