@@ -371,7 +371,7 @@ static bool mux_is_better_rate(unsigned long rate, unsigned long now,
 	return now <= rate && now > best;
 }
 
-static int
+int
 clk_mux_determine_rate_flags(struct clk_hw *hw, struct clk_rate_request *req,
 			     unsigned long flags)
 {

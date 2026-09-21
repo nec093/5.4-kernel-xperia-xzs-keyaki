@@ -1386,6 +1386,88 @@ int __boot_cpu_id;
 
 #endif /* CONFIG_SMP */
 
+/*
+ * Legacy CPU notifier API.  Mainline removed it in 4.10, but the CAF/Sony
+ * vendor drivers still use register_cpu_notifier(); emulate it on top of
+ * the hotplug state machine (CPU_UP_PREPARE/CPU_DEAD via NOTIFY_PREPARE,
+ * CPU_STARTING/CPU_DYING via AP_NOTIFY_STARTING and CPU_ONLINE/
+ * CPU_DOWN_PREPARE via AP_NOTIFY_ONLINE).  The *_FROZEN variants,
+ * CPU_UP_CANCELED and CPU_DOWN_FAILED are not generated.
+ */
+static RAW_NOTIFIER_HEAD(cpu_chain);
+
+static int cpu_notify_compat(unsigned long val, unsigned int cpu)
+{
+	return notifier_to_errno(raw_notifier_call_chain(&cpu_chain, val,
+							 (void *)(long)cpu));
+}
+
+static int notify_prepare(unsigned int cpu)
+{
+	return cpu_notify_compat(CPU_UP_PREPARE, cpu);
+}
+
+static int notify_dead(unsigned int cpu)
+{
+	cpu_notify_compat(CPU_DEAD, cpu);
+	return 0;
+}
+
+static int notify_starting(unsigned int cpu)
+{
+	cpu_notify_compat(CPU_STARTING, cpu);
+	return 0;
+}
+
+static int notify_dying(unsigned int cpu)
+{
+	cpu_notify_compat(CPU_DYING, cpu);
+	return 0;
+}
+
+static int notify_online(unsigned int cpu)
+{
+	return cpu_notify_compat(CPU_ONLINE, cpu);
+}
+
+static int notify_down_prepare(unsigned int cpu)
+{
+	int err = cpu_notify_compat(CPU_DOWN_PREPARE, cpu);
+
+	return err;
+}
+
+int __register_cpu_notifier(struct notifier_block *nb)
+{
+	return raw_notifier_chain_register(&cpu_chain, nb);
+}
+EXPORT_SYMBOL(__register_cpu_notifier);
+
+int register_cpu_notifier(struct notifier_block *nb)
+{
+	int ret;
+
+	cpu_maps_update_begin();
+	ret = raw_notifier_chain_register(&cpu_chain, nb);
+	cpu_maps_update_done();
+	return ret;
+}
+EXPORT_SYMBOL(register_cpu_notifier);
+
+void __unregister_cpu_notifier(struct notifier_block *nb)
+{
+	raw_notifier_chain_unregister(&cpu_chain, nb);
+}
+EXPORT_SYMBOL(__unregister_cpu_notifier);
+
+void unregister_cpu_notifier(struct notifier_block *nb)
+{
+	cpu_maps_update_begin();
+	raw_notifier_chain_unregister(&cpu_chain, nb);
+	cpu_maps_update_done();
+}
+EXPORT_SYMBOL(unregister_cpu_notifier);
+
 /* Boot processor state steps */
 static struct cpuhp_step cpuhp_bp_states[] = {
 	[CPUHP_OFFLINE] = {
@@ -1399,6 +1481,11 @@ static struct cpuhp_step cpuhp_bp_states[] = {
 		.startup.single		= smpboot_create_threads,
 		.teardown.single	= NULL,
 		.cant_stop		= true,
+	},
+	[CPUHP_NOTIFY_PREPARE] = {
+		.name			= "notify:prepare",
+		.startup.single		= notify_prepare,
+		.teardown.single	= notify_dead,
 	},
 	[CPUHP_PERF_PREPARE] = {
 		.name			= "perf:prepare",
@@ -1518,6 +1605,16 @@ static struct cpuhp_step cpuhp_ap_states[] = {
 		.name			= "irq/affinity:online",
 		.startup.single		= irq_affinity_online_cpu,
 		.teardown.single	= NULL,
+	},
+	[CPUHP_AP_NOTIFY_STARTING] = {
+		.name			= "notify:starting",
+		.startup.single		= notify_starting,
+		.teardown.single	= notify_dying,
+	},
+	[CPUHP_AP_NOTIFY_ONLINE] = {
+		.name			= "notify:online",
+		.startup.single		= notify_online,
+		.teardown.single	= notify_down_prepare,
 	},
 	[CPUHP_AP_PERF_ONLINE] = {
 		.name			= "perf:online",
