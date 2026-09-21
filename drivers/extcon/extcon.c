@@ -21,11 +21,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-/*
- * NOTE: This file has been modified by Sony Mobile Communications Inc.
- * Modifications are Copyright (c) 2016 Sony Mobile Communications Inc,
- * and licensed under the license of the file.
- */
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -192,12 +187,6 @@ struct __extcon_info {
 		.id = EXTCON_JIG,
 		.name = "JIG",
 	},
-	[EXTCON_MECHANICAL] = {
-		.type = EXTCON_TYPE_MISC,
-		.id = EXTCON_MECHANICAL,
-		.name = "MECHANICAL",
-	},
-
 #ifdef CONFIG_EXTCON_SOMC_EXTENSION
 	[EXTCON_VBUS_DROP] = {
 		.type = EXTCON_TYPE_MISC,
@@ -205,6 +194,11 @@ struct __extcon_info {
 		.name = "VBUS-DROP",
 	},
 #endif
+	[EXTCON_MECHANICAL] = {
+		.type = EXTCON_TYPE_MISC,
+		.id = EXTCON_MECHANICAL,
+		.name = "MECHANICAL",
+	},
 
 	{ /* sentinel */ }
 };
@@ -1318,16 +1312,6 @@ int extcon_dev_register(struct extcon_dev *edev)
 		edev->dev.type = &edev->extcon_dev_type;
 	}
 
-	ret = device_register(&edev->dev);
-	if (ret) {
-		put_device(&edev->dev);
-		goto err_dev;
-	}
-#if defined(CONFIG_ANDROID) && !IS_ENABLED(CONFIG_SWITCH)
-	if (switch_class)
-		ret = class_compat_create_link(switch_class, &edev->dev, NULL);
-#endif /* CONFIG_ANDROID */
-
 	spin_lock_init(&edev->lock);
 	if (edev->max_supported) {
 		edev->nh = kcalloc(edev->max_supported, sizeof(*edev->nh),
@@ -1345,8 +1329,10 @@ int extcon_dev_register(struct extcon_dev *edev)
 		goto err_dev;
 	}
 
-	for (index = 0; index < edev->max_supported; index++)
+	for (index = 0; index < edev->max_supported; index++) {
 		RAW_INIT_NOTIFIER_HEAD(&edev->nh[index]);
+		BLOCKING_INIT_NOTIFIER_HEAD(&edev->bnh[index]);
+	}
 
 	RAW_INIT_NOTIFIER_HEAD(&edev->nh_all);
 
@@ -1358,6 +1344,10 @@ int extcon_dev_register(struct extcon_dev *edev)
 		put_device(&edev->dev);
 		goto err_dev;
 	}
+#if defined(CONFIG_ANDROID) && !IS_ENABLED(CONFIG_SWITCH)
+	if (switch_class)
+		ret = class_compat_create_link(switch_class, &edev->dev, NULL);
+#endif /* CONFIG_ANDROID */
 
 	mutex_lock(&extcon_dev_list_lock);
 	list_add(&edev->entry, &extcon_dev_list);

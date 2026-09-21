@@ -181,63 +181,6 @@ union extcon_property_value {
 };
 
 struct extcon_cable;
-
-/**
- * struct extcon_dev - An extcon device represents one external connector.
- * @name:		The name of this extcon device. Parent device name is
- *			used if NULL.
- * @supported_cable:	Array of supported cable names ending with EXTCON_NONE.
- *			If supported_cable is NULL, cable name related APIs
- *			are disabled.
- * @mutually_exclusive:	Array of mutually exclusive set of cables that cannot
- *			be attached simultaneously. The array should be
- *			ending with NULL or be NULL (no mutually exclusive
- *			cables). For example, if it is { 0x7, 0x30, 0}, then,
- *			{0, 1}, {0, 1, 2}, {0, 2}, {1, 2}, or {4, 5} cannot
- *			be attached simulataneously. {0x7, 0} is equivalent to
- *			{0x3, 0x6, 0x5, 0}. If it is {0xFFFFFFFF, 0}, there
- *			can be no simultaneous connections.
- * @dev:		Device of this extcon.
- * @state:		Attach/detach state of this extcon. Do not provide at
- *			register-time.
- * @nh:			Notifier for the state change events from this extcon
- * @entry:		To support list of extcon devices so that users can
- *			search for extcon devices based on the extcon name.
- * @lock:
- * @max_supported:	Internal value to store the number of cables.
- * @extcon_dev_type:	Device_type struct to provide attribute_groups
- *			customized for each extcon device.
- * @cables:		Sysfs subdirectories. Each represents one cable.
- *
- * In most cases, users only need to provide "User initializing data" of
- * this struct when registering an extcon. In some exceptional cases,
- * optional callbacks may be needed. However, the values in "internal data"
- * are overwritten by register function.
- */
-struct extcon_dev {
-	/* Optional user initializing data */
-	const char *name;
-	const unsigned int *supported_cable;
-	const u32 *mutually_exclusive;
-
-	/* Internal data. Please do not set. */
-	struct device dev;
-	struct raw_notifier_head *nh;
-	struct blocking_notifier_head *bnh;
-	struct list_head entry;
-	int max_supported;
-	spinlock_t lock;	/* could be called by irq handler */
-	u32 state;
-
-	/* /sys/class/extcon/.../cable.n/... */
-	struct device_type extcon_dev_type;
-	struct extcon_cable *cables;
-
-	/* /sys/class/extcon/.../mutually_exclusive/... */
-	struct attribute_group attr_g_muex;
-	struct attribute **attrs_muex;
-	struct device_attribute *d_attrs_muex;
-};
 struct extcon_dev;
 
 #if IS_ENABLED(CONFIG_EXTCON)
@@ -259,6 +202,12 @@ extern void devm_extcon_dev_free(struct device *dev, struct extcon_dev *edev);
 
 /* Synchronize the state and property value for each external connector. */
 extern int extcon_sync(struct extcon_dev *edev, unsigned int id);
+extern int extcon_blocking_sync(struct extcon_dev *edev, unsigned int id,
+				bool val);
+extern int extcon_register_blocking_notifier(struct extcon_dev *edev,
+				unsigned int id, struct notifier_block *nb);
+extern int extcon_unregister_blocking_notifier(struct extcon_dev *edev,
+				unsigned int id, struct notifier_block *nb);
 
 /*
  * Following APIs get/set the connected state of each external connector.
@@ -305,11 +254,7 @@ extern int extcon_set_property_capability(struct extcon_dev *edev,
 extern int extcon_register_notifier(struct extcon_dev *edev, unsigned int id,
 				struct notifier_block *nb);
 extern int extcon_unregister_notifier(struct extcon_dev *edev, unsigned int id,
-				    struct notifier_block *nb);
-extern int extcon_register_blocking_notifier(struct extcon_dev *edev,
-		unsigned int id, struct notifier_block *nb);
-extern int extcon_unregister_blocking_notifier(struct extcon_dev *edev,
-		unsigned int id, struct notifier_block *nb);
+				struct notifier_block *nb);
 extern int devm_extcon_register_notifier(struct device *dev,
 				struct extcon_dev *edev, unsigned int id,
 				struct notifier_block *nb);
@@ -338,8 +283,6 @@ extern struct extcon_dev *extcon_get_edev_by_phandle(struct device *dev,
 /* Following API get the name of extcon device. */
 extern const char *extcon_get_edev_name(struct extcon_dev *edev);
 
-extern int extcon_blocking_sync(struct extcon_dev *edev, unsigned int id,
-							bool val);
 #else /* CONFIG_EXTCON */
 static inline int extcon_dev_register(struct extcon_dev *edev)
 {
@@ -390,6 +333,24 @@ static inline int extcon_set_state_sync(struct extcon_dev *edev, unsigned int id
 	return 0;
 }
 
+static inline int extcon_blocking_sync(struct extcon_dev *edev,
+				       unsigned int id, bool val)
+{
+	return 0;
+}
+
+static inline int extcon_register_blocking_notifier(struct extcon_dev *edev,
+				unsigned int id, struct notifier_block *nb)
+{
+	return 0;
+}
+
+static inline int extcon_unregister_blocking_notifier(struct extcon_dev *edev,
+				unsigned int id, struct notifier_block *nb)
+{
+	return 0;
+}
+
 static inline int extcon_sync(struct extcon_dev *edev, unsigned int id)
 {
 	return 0;
@@ -435,20 +396,6 @@ static inline int extcon_register_notifier(struct extcon_dev *edev,
 
 static inline int extcon_unregister_notifier(struct extcon_dev *edev,
 				unsigned int id, struct notifier_block *nb)
-{
-	return 0;
-}
-
-static inline int extcon_register_blocking_notifier(struct extcon_dev *edev,
-					unsigned int id,
-					struct notifier_block *nb)
-{
-	return 0;
-}
-
-static inline int extcon_unregister_blocking_notifier(struct extcon_dev *edev,
-					unsigned int id,
-					struct notifier_block *nb)
 {
 	return 0;
 }
@@ -521,4 +468,20 @@ static inline int extcon_unregister_interest(struct extcon_specific_cable_nb *ob
 {
 	return -EINVAL;
 }
+/*
+ * Legacy id-based helpers still used by the CAF/Sony vendor drivers
+ * (removed from mainline in 4.8): map onto the current state API.
+ */
+static inline int extcon_set_cable_state_(struct extcon_dev *edev,
+					  unsigned int id, bool cable_state)
+{
+	return extcon_set_state_sync(edev, id, cable_state);
+}
+
+static inline int extcon_get_cable_state_(struct extcon_dev *edev,
+					  unsigned int id)
+{
+	return extcon_get_state(edev, id);
+}
+
 #endif /* __LINUX_EXTCON_H__ */

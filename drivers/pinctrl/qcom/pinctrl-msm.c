@@ -213,6 +213,7 @@ static int msm_config_reg(struct msm_pinctrl *pctrl,
 #define MSM_NO_PULL	0
 #define MSM_PULL_DOWN	1
 #define MSM_KEEPER	2
+#define MSM_PULL_UP_NO_KEEPER	2
 #define MSM_PULL_UP	3
 
 static unsigned msm_regval_to_drive(u32 val)
@@ -857,7 +858,7 @@ static void msm_gpio_domain_set_info(struct irq_domain *d, unsigned int irq,
 	irq_domain_set_info(d, irq, hwirq, gc->irqchip, d->host_data,
 		gc->irq_handler, NULL, NULL);
 
-	if (gc->can_sleep && !gc->irq_not_threaded)
+	if (gc->can_sleep)
 		irq_set_nested_thread(irq, 1);
 
 	irq_set_noprobe(irq);

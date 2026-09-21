@@ -160,6 +160,7 @@ struct msm_pinctrl_soc_data {
 	const struct msm_pingroup *groups;
 	unsigned ngroups;
 	unsigned ngpios;
+	bool pull_no_keeper;
 	const struct msm_dir_conn *dir_conn;
 	unsigned int n_dir_conns;
 	unsigned int dir_conn_irq_base;
