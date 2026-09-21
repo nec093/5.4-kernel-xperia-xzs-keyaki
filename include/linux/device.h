@@ -364,7 +364,6 @@ int subsys_virtual_register(struct bus_type *subsys,
  * @name:	Name of the class.
  * @owner:	The module owner.
  * @class_groups: Default attributes of this class.
- * @class_groups: Default attributes of this class.
  * @dev_groups:	Default attributes of the devices that belong to the class.
  * @dev_kobj:	The kobject that represents this class and links it into the hierarchy.
  * @dev_uevent:	Called when a device is added, removed from this class, or a
@@ -393,7 +392,6 @@ struct class {
 	const char		*name;
 	struct module		*owner;
 
-	const struct attribute_group	**class_groups;
 	const struct attribute_group	**class_groups;
 	const struct attribute_group	**dev_groups;
 	struct kobject			*dev_kobj;
@@ -469,8 +467,6 @@ struct class_attribute {
 	struct class_attribute class_attr_##_name = __ATTR_RW(_name)
 #define CLASS_ATTR_RO(_name) \
 	struct class_attribute class_attr_##_name = __ATTR_RO(_name)
-#define CLASS_ATTR_WO(_name) \
-	struct class_attribute class_attr_##_name = __ATTR_WO(_name)
 #define CLASS_ATTR_WO(_name) \
 	struct class_attribute class_attr_##_name = __ATTR_WO(_name)
 

@@ -52,7 +52,6 @@ struct bio {
 	struct gendisk		*bi_disk;
 	u8			bi_partno;
 	blk_status_t		bi_status;
-	unsigned short		bi_write_hint;
 	unsigned int		bi_opf;		/* bottom bits req flags,
 						 * top bits REQ_OP. Use
 						 * accessors.

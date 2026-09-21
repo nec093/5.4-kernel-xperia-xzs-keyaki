@@ -16,11 +16,10 @@
 #include <linux/rcupdate.h>
 #include <linux/refcount.h>
 #include <linux/percpu-refcount.h>
-#include <linux/bpf-cgroup.h>
-#include <linux/psi_types.h>
 #include <linux/percpu-rwsem.h>
 #include <linux/workqueue.h>
 #include <linux/bpf-cgroup.h>
+#include <linux/psi_types.h>
 
 #ifdef CONFIG_CGROUPS
 
@@ -370,9 +369,6 @@ struct cgroup {
 	/* used to schedule release agent */
 	struct work_struct release_agent_work;
 
-	/* used to store eBPF programs */
-	struct cgroup_bpf bpf;
-
 	/* used to track pressure stalls */
 	struct psi_group psi;
 
@@ -462,9 +458,6 @@ struct cftype {
 	struct cgroup_subsys *ss;	/* NULL for cgroup core files */
 	struct list_head node;		/* anchored at ss->cfts */
 	struct kernfs_ops *kf_ops;
-
-	int (*open)(struct kernfs_open_file *of);
-	void (*release)(struct kernfs_open_file *of);
 
 	int (*open)(struct kernfs_open_file *of);
 	void (*release)(struct kernfs_open_file *of);

@@ -82,7 +82,6 @@ enum pageflags {
 	PG_active,
 	PG_workingset,
 	PG_error,
-	PG_waiters,		/* Page has waiters, check its waitqueue. Must be bit #7 and in the same byte as "PG_locked" */
 	PG_slab,
 	PG_owner_priv_1,	/* Owner use. If pagecache, fs may use*/
 	PG_arch_1,
@@ -176,9 +175,6 @@ static __always_inline int PageCompound(struct page *page)
  * PF_ONLY_HEAD:
  *     for compound page, callers only ever operate on the head page.
  *
- * PF_ONLY_HEAD:
- *     for compound page, callers only ever operate on the head page.
- *
  * PF_NO_TAIL:
  *     modifications of the page flag must be done on small or head pages,
  *     checks can be done on tail pages too.
@@ -188,9 +184,6 @@ static __always_inline int PageCompound(struct page *page)
  */
 #define PF_ANY(page, enforce)	page
 #define PF_HEAD(page, enforce)	compound_head(page)
-#define PF_ONLY_HEAD(page, enforce) ({					\
-		VM_BUG_ON_PGFLAGS(PageTail(page), page);		\
-		page;})
 #define PF_ONLY_HEAD(page, enforce) ({					\
 		VM_BUG_ON_PGFLAGS(PageTail(page), page);		\
 		page;})
@@ -268,7 +261,6 @@ static inline int TestClearPage##uname(struct page *page) { return 0; }
 	SETPAGEFLAG_NOOP(uname) CLEARPAGEFLAG_NOOP(uname)
 
 #define TESTSCFLAG_FALSE(uname)						\
-PAGEFLAG(Waiters, waiters, PF_ONLY_HEAD) __CLEARPAGEFLAG(Waiters, waiters, PF_ONLY_HEAD)
 	TESTSETFLAG_FALSE(uname) TESTCLEARFLAG_FALSE(uname)
 
 __PAGEFLAG(Locked, locked, PF_NO_TAIL)
@@ -772,4 +764,3 @@ static inline int page_has_private(struct page *page)
 #endif /* !__GENERATING_BOUNDS_H */
 
 #endif	/* PAGE_FLAGS_H */
-#undef PF_ONLY_HEAD

@@ -48,7 +48,6 @@ enum kernfs_node_flag {
 	KERNFS_SUICIDED		= 0x0800,
 	KERNFS_EMPTY_DIR	= 0x1000,
 	KERNFS_HAS_RELEASE	= 0x2000,
-	KERNFS_HAS_RELEASE	= 0x2000,
 };
 
 /* @flags for kernfs_create_root() */
@@ -177,7 +176,6 @@ struct kernfs_syscall_ops {
 	int (*rename)(struct kernfs_node *kn, struct kernfs_node *new_parent,
 		      const char *new_name);
 	int (*show_path)(struct seq_file *sf, struct kernfs_node *kn,
-	struct seq_file		*seq_file;
 			 struct kernfs_root *root);
 };
 
@@ -214,18 +212,10 @@ struct kernfs_open_file {
 	size_t			atomic_write_len;
 	bool			mmapped:1;
 	bool			released:1;
-	bool			released:1;
 	const struct vm_operations_struct *vm_ops;
 };
 
 struct kernfs_ops {
-	/*
-	 * Optional open/release methods.  Both are called with
-	 * @of->seq_file populated.
-	 */
-	int (*open)(struct kernfs_open_file *of);
-	void (*release)(struct kernfs_open_file *of);
-
 	/*
 	 * Optional open/release methods.  Both are called with
 	 * @of->seq_file populated.

@@ -230,13 +230,6 @@ union bpf_attr {
 		__u32		attach_flags;
 	};
 
-	struct { /* anonymous struct used by BPF_PROG_ATTACH/DETACH commands */
-		__u32		target_fd;	/* container object to attach to */
-		__u32		attach_bpf_fd;	/* eBPF program to attach */
-		__u32		attach_type;
-		__u32		attach_flags;
-	};
-
 	struct { /* anonymous struct used by BPF_PROG_TEST_RUN command */
 		__u32		prog_fd;
 		__u32		retval;
