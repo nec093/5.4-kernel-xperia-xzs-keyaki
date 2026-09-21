@@ -21,7 +21,6 @@
 #include <asm/sysreg.h>
 
 #ifndef __ASSEMBLY__
-#define ICC_HPPIR1_EL1			sys_reg(3, 0, 12, 12, 2)
 
 #include <linux/stringify.h>
 #include <asm/barrier.h>

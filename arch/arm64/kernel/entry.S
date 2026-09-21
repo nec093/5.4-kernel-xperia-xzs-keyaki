@@ -37,7 +37,6 @@
 #include <asm/uaccess.h>
 #include <asm/asm-uaccess.h>
 #include <asm/unistd.h>
-#include <asm/kernel-pgtable.h>
 
 /*
  * Context tracking subsystem.  Used to instrument transitions
@@ -76,26 +75,75 @@
 
 	.macro kernel_ventry, el, label, regsize = 64
 	.align 7
-#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-alternative_if ARM64_UNMAP_KERNEL_AT_EL0
+.Lventry_start\@:
 	.if	\el == 0
+	/*
+	 * This must be the first instruction of the EL0 vector entries. It is
+	 * skipped by the trampoline vectors, to trigger the cleanup.
+	 */
+	b	.Lskip_tramp_vectors_cleanup\@
 	.if	\regsize == 64
 	mrs	x30, tpidrro_el0
 	msr	tpidrro_el0, xzr
 	.else
 	mov	x30, xzr
 	.endif
+.Lskip_tramp_vectors_cleanup\@:
 	.endif
-alternative_else_nop_endif
-#endif
 
 	sub	sp, sp, #S_FRAME_SIZE
+#ifdef CONFIG_VMAP_STACK
+	/*
+	 * Test whether the SP has overflowed, without corrupting a GPR.
+	 * Task and IRQ stacks are aligned to (1 << THREAD_SHIFT).
+	 */
+	add	sp, sp, x0			// sp' = sp + x0
+	sub	x0, sp, x0			// x0' = sp' - x0 = (sp + x0) - x0 = sp
+	tbnz	x0, #THREAD_SHIFT, 0f
+	sub	x0, sp, x0			// x0'' = sp' - x0' = (sp + x0) - sp = x0
+	sub	sp, sp, x0			// sp'' = sp' - x0 = (sp + x0) - x0 = sp
 	b	el\()\el\()_\label
+
+0:
+	/*
+	 * Either we've just detected an overflow, or we've taken an exception
+	 * while on the overflow stack. Either way, we won't return to
+	 * userspace, and can clobber EL0 registers to free up GPRs.
+	 */
+
+	/* Stash the original SP (minus S_FRAME_SIZE) in tpidr_el0. */
+	msr	tpidr_el0, x0
+
+	/* Recover the original x0 value and stash it in tpidrro_el0 */
+	sub	x0, sp, x0
+	msr	tpidrro_el0, x0
+
+	/* Switch to the overflow stack */
+	adr_this_cpu sp, overflow_stack + OVERFLOW_STACK_SIZE, x0
+
+	/*
+	 * Check whether we were already on the overflow stack. This may happen
+	 * after panic() re-enables interrupts.
+	 */
+	mrs	x0, tpidr_el0			// sp of interrupted context
+	sub	x0, sp, x0			// delta with top of overflow stack
+	tst	x0, #~(OVERFLOW_STACK_SIZE - 1)	// within range?
+	b.ne	__bad_stack			// no? -> bad stack pointer
+
+	/* We were already on the overflow stack. Restore sp/x0 and carry on. */
+	sub	sp, sp, x0
+	mrs	x0, tpidrro_el0
+#endif
+	b	el\()\el\()_\label
+.org .Lventry_start\@ + 128	// Did we overflow the ventry slot?
 	.endm
 
-	.macro tramp_alias, dst, sym
+	.macro tramp_alias, dst, sym, tmp
 	mov_q	\dst, TRAMP_VALIAS
-	add	\dst, \dst, #(\sym - .entry.tramp.text)
+	adr_l	\tmp, \sym
+	add	\dst, \dst, \tmp
+	adr_l	\tmp, .entry.tramp.text
+	sub	\dst, \dst, \tmp
 	.endm
 
 	// This macro corrupts x0-x3. It is the caller's duty
@@ -166,6 +214,18 @@ alternative_cb_end
 	mrs	x23, spsr_el1
 	stp	lr, x21, [sp, #S_LR]
 
+	/*
+	 * In order to be able to dump the contents of struct pt_regs at the
+	 * time the exception was taken (in case we attempt to walk the call
+	 * stack later), chain it together with the stack frames.
+	 */
+	.if \el == 0
+	stp	xzr, xzr, [sp, #S_STACKFRAME]
+	.else
+	stp	x29, x22, [sp, #S_STACKFRAME]
+	.endif
+	add	x29, sp, #S_STACKFRAME
+
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 	/*
 	 * Set the TTBR0 PAN bit in SPSR. When the exception is taken from
@@ -193,12 +253,10 @@ alternative_else_nop_endif
 
 	stp	x22, x23, [sp, #S_PC]
 
-	/*
-	 * Set syscallno to -1 by default (overridden later if real syscall).
-	 */
+	/* Not in a syscall by default (el0_svc overwrites for real syscall) */
 	.if	\el == 0
-	mvn	x21, xzr
-	str	x21, [sp, #S_SYSCALLNO]
+	mov	w21, #NO_SYSCALL
+	str	w21, [sp, #S_SYSCALLNO]
 	.endif
 
 	/*
@@ -300,21 +358,25 @@ alternative_else_nop_endif
 	ldp	x24, x25, [sp, #16 * 12]
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
-	ldr	lr, [sp, #S_LR]
-	add	sp, sp, #S_FRAME_SIZE		// restore sp
 
 	.if	\el == 0
-alternative_insn eret, nop, ARM64_UNMAP_KERNEL_AT_EL0
+alternative_if_not ARM64_UNMAP_KERNEL_AT_EL0
+	ldr	lr, [sp, #S_LR]
+	add	sp, sp, #S_FRAME_SIZE		// restore sp
+	eret
+alternative_else_nop_endif
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
 	bne	4f
-	msr	far_el1, x30
-	tramp_alias	x30, tramp_exit_native
+	msr	far_el1, x29
+	tramp_alias	x30, tramp_exit_native, x29
 	br	x30
 4:
-	tramp_alias	x30, tramp_exit_compat
+	tramp_alias	x30, tramp_exit_compat, x29
 	br	x30
 #endif
 	.else
+	ldr	lr, [sp, #S_LR]
+	add	sp, sp, #S_FRAME_SIZE		// restore sp
 	eret
 	.endif
 	.endm
@@ -332,20 +394,12 @@ alternative_insn eret, nop, ARM64_UNMAP_KERNEL_AT_EL0
 	and	x25, x25, #~(THREAD_SIZE - 1)
 	cbnz	x25, 9998f
 
-	adr_this_cpu x25, irq_stack, x26
-	mov	x26, #IRQ_STACK_START_SP
+	ldr_this_cpu x25, irq_stack_ptr, x26
+	mov	x26, #IRQ_STACK_SIZE
 	add	x26, x25, x26
 
 	/* switch to the irq stack */
 	mov	sp, x26
-
-	/*
-	 * Add a dummy stack frame, this non-standard format is fixed up
-	 * by unwind_frame()
-	 */
-	stp     x29, x19, [sp, #-16]!
-	mov	x29, sp
-
 9998:
 	.endm
 
@@ -363,8 +417,10 @@ alternative_insn eret, nop, ARM64_UNMAP_KERNEL_AT_EL0
  *
  * x7 is reserved for the system call number in 32-bit mode.
  */
-sc_nr	.req	x25		// number of system calls
-scno	.req	x26		// syscall number
+wsc_nr	.req	w25		// number of system calls
+xsc_nr	.req	x25		// number of system calls (zero-extended)
+wscno	.req	w26		// syscall number
+xscno	.req	x26		// syscall number (zero-extended)
 stbl	.req	x27		// syscall table pointer
 tsk	.req	x28		// current thread_info
 
@@ -416,6 +472,34 @@ ENTRY(vectors)
 #endif
 END(vectors)
 
+#ifdef CONFIG_VMAP_STACK
+	/*
+	 * We detected an overflow in kernel_ventry, which switched to the
+	 * overflow stack. Stash the exception regs, and head to our overflow
+	 * handler.
+	 */
+__bad_stack:
+	/* Restore the original x0 value */
+	mrs	x0, tpidrro_el0
+
+	/*
+	 * Store the original GPRs to the new stack. The orginal SP (minus
+	 * S_FRAME_SIZE) was stashed in tpidr_el0 by kernel_ventry.
+	 */
+	sub	sp, sp, #S_FRAME_SIZE
+	kernel_entry 1
+	mrs	x0, tpidr_el0
+	add	x0, x0, #S_FRAME_SIZE
+	str	x0, [sp, #S_SP]
+
+	/* Stash the regs for handle_bad_stack */
+	mov	x0, sp
+
+	/* Time to die */
+	bl	handle_bad_stack
+	ASM_BUG()
+#endif /* CONFIG_VMAP_STACK */
+
 /*
  * Invalid mode handlers
  */
@@ -424,7 +508,8 @@ END(vectors)
 	mov	x0, sp
 	mov	x1, #\reason
 	mrs	x2, esr_el1
-	b	bad_mode
+	bl	bad_mode
+	ASM_BUG()
 	.endm
 
 el0_sync_invalid:
@@ -524,14 +609,16 @@ el1_sp_pc:
 	mrs	x0, far_el1
 	enable_dbg
 	mov	x2, sp
-	b	do_sp_pc_abort
+	bl	do_sp_pc_abort
+	ASM_BUG()
 el1_undef:
 	/*
 	 * Undefined instruction
 	 */
 	enable_dbg
 	mov	x0, sp
-	b	do_undefinstr
+	bl	do_undefinstr
+	ASM_BUG()
 el1_dbg:
 	/*
 	 * Debug exception handling
@@ -549,7 +636,8 @@ el1_inv:
 	mov	x0, sp
 	mov	x2, x1
 	mov	x1, #BAD_SYNC
-	b	bad_mode
+	bl	bad_mode
+	ASM_BUG()
 ENDPROC(el1_sync)
 
 	.align	6
@@ -656,8 +744,8 @@ el0_svc_compat:
 	 */
 	ldr	x16, [tsk, #TSK_TI_FLAGS]	// load thread flags
 	adrp	stbl, compat_sys_call_table	// load compat syscall table pointer
-	uxtw	scno, w7			// syscall number in w7 (r7)
-	mov     sc_nr, #__NR_compat_syscalls
+	mov	wscno, w7			// syscall number in w7 (r7)
+	mov     wsc_nr, #__NR_compat_syscalls
 	b	el0_svc_naked
 
 el0_cp15_32_compat:
@@ -706,7 +794,7 @@ el0_ia:
 	 * Instruction abort handling
 	 */
 	mrs	x26, far_el1
-	msr     daifclr, #(8 | 4 | 1)
+	enable_dbg
 #ifdef CONFIG_TRACE_IRQFLAGS
 	bl	trace_hardirqs_off
 #endif
@@ -837,6 +925,351 @@ el0_irq_naked:
 ENDPROC(el0_irq)
 
 /*
+ * This is the fast syscall return path.  We do as little as possible here,
+ * and this includes saving x0 back into the kernel stack.
+ */
+ret_fast_syscall:
+	disable_irq				// disable interrupts
+	str	x0, [sp, #S_X0]			// returned x0
+	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for syscall tracing
+	and	x2, x1, #_TIF_SYSCALL_WORK
+	cbnz	x2, ret_fast_syscall_trace
+	and	x2, x1, #_TIF_WORK_MASK
+	cbnz	x2, work_pending
+	enable_step_tsk x1, x2
+	kernel_exit 0
+ret_fast_syscall_trace:
+	enable_irq				// enable interrupts
+	b	__sys_trace_return_skipped	// we already saved x0
+
+/*
+ * Ok, we need to do extra processing, enter the slow path.
+ */
+work_pending:
+	mov	x0, sp				// 'regs'
+	bl	do_notify_resume
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_on		// enabled while in userspace
+#endif
+	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for single-step
+	b	finish_ret_to_user
+/*
+ * "slow" syscall return path.
+ */
+ret_to_user:
+	disable_irq				// disable interrupts
+	ldr	x1, [tsk, #TSK_TI_FLAGS]
+	and	x2, x1, #_TIF_WORK_MASK
+	cbnz	x2, work_pending
+finish_ret_to_user:
+	enable_step_tsk x1, x2
+	kernel_exit 0
+ENDPROC(ret_to_user)
+
+/*
+ * SVC handler.
+ */
+	.align	6
+el0_svc:
+	ldr	x16, [tsk, #TSK_TI_FLAGS]	// load thread flags
+	adrp	stbl, sys_call_table		// load syscall table pointer
+	mov	wscno, w8			// syscall number in w8
+	mov	wsc_nr, #__NR_syscalls
+el0_svc_naked:					// compat entry point
+	stp	x0, xscno, [sp, #S_ORIG_X0]	// save the original x0 and syscall number
+	enable_dbg_and_irq
+	ct_user_exit 1
+
+	ldr	x16, [tsk, #TSK_TI_FLAGS]	// check for syscall hooks
+	tst	x16, #_TIF_SYSCALL_WORK
+	b.ne	__sys_trace
+	cmp     wscno, wsc_nr			// check upper syscall limit
+	b.hs	ni_sys
+	mask_nospec64 xscno, xsc_nr, x19	// enforce bounds for syscall number
+	ldr	x16, [stbl, xscno, lsl #3]	// address in the syscall table
+	blr	x16				// call sys_* routine
+	b	ret_fast_syscall
+ni_sys:
+	mov	x0, sp
+	bl	do_ni_syscall
+	b	ret_fast_syscall
+ENDPROC(el0_svc)
+
+	/*
+	 * This is the really slow path.  We're going to be doing context
+	 * switches, and waiting for our parent to respond.
+	 */
+__sys_trace:
+	cmp     wscno, #NO_SYSCALL		// user-issued syscall(-1)?
+	b.ne	1f
+	mov	x0, #-ENOSYS			// set default errno if so
+	str	x0, [sp, #S_X0]
+1:	mov	x0, sp
+	bl	syscall_trace_enter
+	cmp	w0, #NO_SYSCALL			// skip the syscall?
+	b.eq	__sys_trace_return_skipped
+	mov	wscno, w0			// syscall number (possibly new)
+	mov	x1, sp				// pointer to regs
+	cmp	wscno, wsc_nr			// check upper syscall limit
+	b.hs	__ni_sys_trace
+	ldp	x0, x1, [sp]			// restore the syscall args
+	ldp	x2, x3, [sp, #S_X2]
+	ldp	x4, x5, [sp, #S_X4]
+	ldp	x6, x7, [sp, #S_X6]
+	ldr	x16, [stbl, xscno, lsl #3]	// address in the syscall table
+	blr	x16				// call sys_* routine
+
+__sys_trace_return:
+	str	x0, [sp, #S_X0]			// save returned x0
+__sys_trace_return_skipped:
+	mov	x0, sp
+	bl	syscall_trace_exit
+	b	ret_to_user
+
+__ni_sys_trace:
+	mov	x0, sp
+	bl	do_ni_syscall
+	b	__sys_trace_return
+
+	.popsection				// .entry.text
+
+	// Move from tramp_pg_dir to swapper_pg_dir
+	.macro tramp_map_kernel, tmp
+	mrs	\tmp, ttbr1_el1
+	sub	\tmp, \tmp, #(SWAPPER_DIR_SIZE + RESERVED_TTBR0_SIZE)
+	bic	\tmp, \tmp, #USER_ASID_FLAG
+	msr	ttbr1_el1, \tmp
+#ifdef CONFIG_QCOM_FALKOR_ERRATUM_1003
+alternative_if ARM64_WORKAROUND_QCOM_FALKOR_E1003
+	/* ASID already in \tmp[63:48] */
+	movk	\tmp, #:abs_g2_nc:(TRAMP_VALIAS >> 12)
+	movk	\tmp, #:abs_g1_nc:(TRAMP_VALIAS >> 12)
+	/* 2MB boundary containing the vectors, so we nobble the walk cache */
+	movk	\tmp, #:abs_g0_nc:((TRAMP_VALIAS & ~(SZ_2M - 1)) >> 12)
+	isb
+	tlbi	vae1, \tmp
+	dsb	nsh
+alternative_else_nop_endif
+#endif /* CONFIG_QCOM_FALKOR_ERRATUM_1003 */
+#ifdef CONFIG_ARCH_MSM8996
+	/* ASID already in \tmp[63:48] */
+	movk	\tmp, #:abs_g2_nc:(TRAMP_VALIAS >> 12)
+	movk	\tmp, #:abs_g1_nc:(TRAMP_VALIAS >> 12)
+	/* 2MB boundary containing the vectors, so we nobble the walk cache */
+	movk	\tmp, #:abs_g0_nc:((TRAMP_VALIAS & ~(SZ_2M - 1)) >> 12)
+	isb
+	tlbi	vae1, \tmp
+	dsb	nsh
+#endif /* CONFIG_ARCH_MSM8996 */
+	.endm
+
+	.macro tramp_unmap_kernel, tmp
+	mrs	\tmp, ttbr1_el1
+	add	\tmp, \tmp, #(SWAPPER_DIR_SIZE + RESERVED_TTBR0_SIZE)
+	orr	\tmp, \tmp, #USER_ASID_FLAG
+	msr	ttbr1_el1, \tmp
+	/*
+	 * We avoid running the post_ttbr_update_workaround here because
+	 * it's only needed by Cavium ThunderX, which requires KPTI to be
+	 * disabled.
+	 */
+	.endm
+
+	.macro tramp_data_page	dst
+	adr_l	\dst, .entry.tramp.text
+	sub	\dst, \dst, PAGE_SIZE
+	.endm
+
+	.macro tramp_data_read_var	dst, var
+#ifdef CONFIG_RANDOMIZE_BASE
+	tramp_data_page		\dst
+	add	\dst, \dst, #:lo12:__entry_tramp_data_\var
+	ldr	\dst, [\dst]
+#else
+	ldr	\dst, =\var
+#endif
+	.endm
+
+#define BHB_MITIGATION_NONE	0
+#define BHB_MITIGATION_LOOP	1
+#define BHB_MITIGATION_FW	2
+#define BHB_MITIGATION_INSN	3
+
+	.macro tramp_ventry, vector_start, regsize, kpti, bhb
+	.align	7
+1:
+	.if	\regsize == 64
+	msr	tpidrro_el0, x30	// Restored in kernel_ventry
+	.endif
+
+	.if	\bhb == BHB_MITIGATION_LOOP
+	/*
+	 * This sequence must appear before the first indirect branch. i.e. the
+	 * ret out of tramp_ventry. It appears here because x30 is free.
+	 */
+	__mitigate_spectre_bhb_loop	x30
+	.endif // \bhb == BHB_MITIGATION_LOOP
+
+	.if	\bhb == BHB_MITIGATION_INSN
+	clearbhb
+	isb
+	.endif // \bhb == BHB_MITIGATION_INSN
+
+	.if	\kpti == 1
+	/*
+	 * Defend against branch aliasing attacks by pushing a dummy
+	 * entry onto the return stack and using a RET instruction to
+	 * enter the full-fat kernel vectors.
+	 */
+	bl	2f
+	b	.
+2:
+	tramp_map_kernel	x30
+#ifndef CONFIG_ARCH_MSM8996
+alternative_insn isb, nop, ARM64_WORKAROUND_QCOM_FALKOR_E1003
+#endif
+	tramp_data_read_var	x30, vectors
+	prfm	plil1strm, [x30, #(1b - \vector_start)]
+	msr	vbar_el1, x30
+	isb
+	.else
+	ldr	x30, =vectors
+	.endif // \kpti == 1
+
+	.if	\bhb == BHB_MITIGATION_FW
+	/*
+	 * The firmware sequence must appear before the first indirect branch.
+	 * i.e. the ret out of tramp_ventry. But it also needs the stack to be
+	 * mapped to save/restore the registers the SMC clobbers.
+	 */
+	__mitigate_spectre_bhb_fw
+	.endif // \bhb == BHB_MITIGATION_FW
+
+	add	x30, x30, #(1b - \vector_start + 4)
+	ret
+.org 1b + 128	// Did we overflow the ventry slot?
+	.endm
+
+	.macro tramp_exit, regsize = 64
+	tramp_data_read_var	x30, this_cpu_vector
+alternative_if_not ARM64_HAS_VIRT_HOST_EXTN
+	mrs	x29, tpidr_el1
+alternative_else
+	mrs	x29, tpidr_el2
+alternative_endif
+	ldr	x30, [x30, x29]
+
+	msr	vbar_el1, x30
+	ldr	lr, [sp, #S_LR]
+	tramp_unmap_kernel	x29
+	.if	\regsize == 64
+	mrs	x29, far_el1
+	.endif
+	add	sp, sp, #S_FRAME_SIZE		// restore sp
+	eret
+	.endm
+
+	.macro	generate_tramp_vector,	kpti, bhb
+.Lvector_start\@:
+	.space	0x400
+
+	.rept	4
+	tramp_ventry	.Lvector_start\@, 64, \kpti, \bhb
+	.endr
+	.rept	4
+	tramp_ventry	.Lvector_start\@, 32, \kpti, \bhb
+	.endr
+	.endm
+
+#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
+/*
+ * Exception vectors trampoline.
+ * The order must match __bp_harden_el1_vectors and the
+ * arm64_bp_harden_el1_vectors enum.
+ */
+	.pushsection ".entry.tramp.text", "ax"
+	.align	11
+ENTRY(tramp_vectors)
+#ifdef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
+	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_LOOP
+	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_FW
+	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_INSN
+#endif /* CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
+	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_NONE
+END(tramp_vectors)
+
+ENTRY(tramp_exit_native)
+	tramp_exit
+END(tramp_exit_native)
+
+ENTRY(tramp_exit_compat)
+	tramp_exit	32
+END(tramp_exit_compat)
+
+	.ltorg
+	.popsection				// .entry.tramp.text
+#ifdef CONFIG_RANDOMIZE_BASE
+	.pushsection ".rodata", "a"
+	.align PAGE_SHIFT
+	.globl	__entry_tramp_data_start
+__entry_tramp_data_start:
+__entry_tramp_data_vectors:
+	.quad	vectors
+#ifdef CONFIG_ARM_SDE_INTERFACE
+__entry_tramp_data___sdei_asm_trampoline_next_handler:
+	.quad	__sdei_asm_handler
+#endif /* CONFIG_ARM_SDE_INTERFACE */
+__entry_tramp_data_this_cpu_vector:
+	.quad	this_cpu_vector
+	.popsection				// .rodata
+#endif /* CONFIG_RANDOMIZE_BASE */
+#endif /* CONFIG_UNMAP_KERNEL_AT_EL0 */
+
+/*
+ * Exception vectors for spectre mitigations on entry from EL1 when
+ * kpti is not in use.
+ */
+	.macro generate_el1_vector, bhb
+.Lvector_start\@:
+	kernel_ventry	1, sync_invalid			// Synchronous EL1t
+	kernel_ventry	1, irq_invalid			// IRQ EL1t
+	kernel_ventry	1, fiq_invalid			// FIQ EL1t
+	kernel_ventry	1, error_invalid		// Error EL1t
+
+	kernel_ventry	1, sync				// Synchronous EL1h
+	kernel_ventry	1, irq				// IRQ EL1h
+	kernel_ventry	1, fiq_invalid			// FIQ EL1h
+	kernel_ventry	1, error_invalid		// Error EL1h
+
+	.rept	4
+	tramp_ventry	.Lvector_start\@, 64, 0, \bhb
+	.endr
+	.rept 4
+	tramp_ventry	.Lvector_start\@, 32, 0, \bhb
+	.endr
+	.endm
+
+/* The order must match tramp_vecs and the arm64_bp_harden_el1_vectors enum. */
+	.pushsection ".entry.text", "ax"
+	.align	11
+ENTRY(__bp_harden_el1_vectors)
+#ifdef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
+	generate_el1_vector	bhb=BHB_MITIGATION_LOOP
+	generate_el1_vector	bhb=BHB_MITIGATION_FW
+	generate_el1_vector	bhb=BHB_MITIGATION_INSN
+#endif /* CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
+END(__bp_harden_el1_vectors)
+	.popsection
+
+/*
+ * Special system call wrappers.
+ */
+ENTRY(sys_rt_sigreturn_wrapper)
+	mov	x0, sp
+	b	sys_rt_sigreturn
+ENDPROC(sys_rt_sigreturn_wrapper)
+
+/*
  * Register switch for AArch64. The callee-saved registers need to be saved
  * and restored. On entry:
  *   x0 = previous task_struct (must be preserved across the switch)
@@ -894,48 +1327,7 @@ ENTRY(cpu_switch_to)
 	msr	sp_el0, x1
 	ret
 ENDPROC(cpu_switch_to)
-
-/*
- * This is the fast syscall return path.  We do as little as possible here,
- * and this includes saving x0 back into the kernel stack.
- */
-ret_fast_syscall:
-	disable_irq				// disable interrupts
-	str	x0, [sp, #S_X0]			// returned x0
-	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for syscall tracing
-	and	x2, x1, #_TIF_SYSCALL_WORK
-	cbnz	x2, ret_fast_syscall_trace
-	and	x2, x1, #_TIF_WORK_MASK
-	cbnz	x2, work_pending
-	enable_step_tsk x1, x2
-	kernel_exit 0
-ret_fast_syscall_trace:
-	enable_irq				// enable interrupts
-	b	__sys_trace_return_skipped	// we already saved x0
-
-/*
- * Ok, we need to do extra processing, enter the slow path.
- */
-work_pending:
-	mov	x0, sp				// 'regs'
-	bl	do_notify_resume
-#ifdef CONFIG_TRACE_IRQFLAGS
-	bl	trace_hardirqs_on		// enabled while in userspace
-#endif
-	ldr	x1, [tsk, #TSK_TI_FLAGS]	// re-check for single-step
-	b	finish_ret_to_user
-/*
- * "slow" syscall return path.
- */
-ret_to_user:
-	disable_irq				// disable interrupts
-	ldr	x1, [tsk, #TSK_TI_FLAGS]
-	and	x2, x1, #_TIF_WORK_MASK
-	cbnz	x2, work_pending
-finish_ret_to_user:
-	enable_step_tsk x1, x2
-	kernel_exit 0
-ENDPROC(ret_to_user)
+NOKPROBE(cpu_switch_to)
 
 /*
  * This is how we return from a fork.
@@ -948,210 +1340,4 @@ ENTRY(ret_from_fork)
 1:	get_thread_info tsk
 	b	ret_to_user
 ENDPROC(ret_from_fork)
-
-/*
- * SVC handler.
- */
-	.align	6
-el0_svc:
-	ldr	x16, [tsk, #TSK_TI_FLAGS]	// load thread flags
-	adrp	stbl, sys_call_table		// load syscall table pointer
-	uxtw	scno, w8			// syscall number in w8
-	mov	sc_nr, #__NR_syscalls
-
-#ifdef CONFIG_ARM64_SVE
-alternative_if_not ARM64_SVE
-	b	el0_svc_naked
-alternative_else_nop_endif
-	tbz	x16, #TIF_SVE, el0_svc_naked	// Skip unless TIF_SVE set:
-	bic	x16, x16, #_TIF_SVE		// discard SVE state
-	str	x16, [tsk, #TSK_TI_FLAGS]
-
-	/*
-	 * task_fpsimd_load() won't be called to update CPACR_EL1 in
-	 * ret_to_user unless TIF_FOREIGN_FPSTATE is still set, which only
-	 * happens if a context switch or kernel_neon_begin() or context
-	 * modification (sigreturn, ptrace) intervenes.
-	 * So, ensure that CPACR_EL1 is already correct for the fast-path case:
-	 */
-	mrs	x9, cpacr_el1
-	bic	x9, x9, #CPACR_EL1_ZEN_EL0EN	// disable SVE for el0
-	msr	cpacr_el1, x9			// synchronised by eret to el0
-#endif
-
-el0_svc_naked:					// compat entry point
-	stp	x0, scno, [sp, #S_ORIG_X0]	// save the original x0 and syscall number
-	enable_dbg_and_irq
-	ct_user_exit 1
-
-	tst	x16, #_TIF_SYSCALL_WORK		// check for syscall hooks
-	b.ne	__sys_trace
-	cmp     scno, sc_nr                     // check upper syscall limit
-	b.hs	ni_sys
-	mask_nospec64 scno, sc_nr, x19	// enforce bounds for syscall number
-	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	blr	x16				// call sys_* routine
-	b	ret_fast_syscall
-ni_sys:
-	mov	x0, sp
-	bl	do_ni_syscall
-	b	ret_fast_syscall
-ENDPROC(el0_svc)
-
-	/*
-	 * This is the really slow path.  We're going to be doing context
-	 * switches, and waiting for our parent to respond.
-	 */
-__sys_trace:
-	mov	w0, #-1				// set default errno for
-	cmp     scno, x0			// user-issued syscall(-1)
-	b.ne	1f
-	mov	x0, #-ENOSYS
-	str	x0, [sp, #S_X0]
-1:	mov	x0, sp
-	bl	syscall_trace_enter
-	cmp	w0, #-1				// skip the syscall?
-	b.eq	__sys_trace_return_skipped
-	uxtw	scno, w0			// syscall number (possibly new)
-	mov	x1, sp				// pointer to regs
-	cmp	scno, sc_nr			// check upper syscall limit
-	b.hs	__ni_sys_trace
-	ldp	x0, x1, [sp]			// restore the syscall args
-	ldp	x2, x3, [sp, #S_X2]
-	ldp	x4, x5, [sp, #S_X4]
-	ldp	x6, x7, [sp, #S_X6]
-	ldr	x16, [stbl, scno, lsl #3]	// address in the syscall table
-	blr	x16				// call sys_* routine
-
-__sys_trace_return:
-	str	x0, [sp, #S_X0]			// save returned x0
-__sys_trace_return_skipped:
-	mov	x0, sp
-	bl	syscall_trace_exit
-	b	ret_to_user
-
-__ni_sys_trace:
-	mov	x0, sp
-	bl	do_ni_syscall
-	b	__sys_trace_return
-
-	.popsection				// .entry.text
-
-#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-/*
- * Exception vectors trampoline.
- */
-	.pushsection ".entry.tramp.text", "ax"
-
-	.macro tramp_map_kernel, tmp
-	mrs	\tmp, ttbr1_el1
-	sub	\tmp, \tmp, #(SWAPPER_DIR_SIZE + RESERVED_TTBR0_SIZE)
-	bic	\tmp, \tmp, #USER_ASID_FLAG
-	msr	ttbr1_el1, \tmp
-#ifdef CONFIG_ARCH_MSM8996
-	/* ASID already in \tmp[63:48] */
-	movk	\tmp, #:abs_g2_nc:(TRAMP_VALIAS >> 12)
-	movk	\tmp, #:abs_g1_nc:(TRAMP_VALIAS >> 12)
-	/* 2MB boundary containing the vectors, so we nobble the walk cache */
-	movk	\tmp, #:abs_g0_nc:((TRAMP_VALIAS & ~(SZ_2M - 1)) >> 12)
-	isb
-	tlbi	vae1, \tmp
-	dsb	nsh
-#endif /* CONFIG_ARCH_MSM8996 */
-	.endm
-
-	.macro tramp_unmap_kernel, tmp
-	mrs	\tmp, ttbr1_el1
-	add	\tmp, \tmp, #(SWAPPER_DIR_SIZE + RESERVED_TTBR0_SIZE)
-	orr	\tmp, \tmp, #USER_ASID_FLAG
-	msr	ttbr1_el1, \tmp
-	/*
-	 * We avoid running the post_ttbr_update_workaround here because
-	 * it's only needed by Cavium ThunderX, which requires KPTI to be
-	 * disabled.
-	 */
-	.endm
-
-	.macro tramp_ventry, regsize = 64
-	.align	7
-1:
-	.if	\regsize == 64
-	msr	tpidrro_el0, x30	// Restored in kernel_ventry
-	.endif
-	/*
-	 * Defend against branch aliasing attacks by pushing a dummy
-	 * entry onto the return stack and using a RET instruction to
-	 * enter the full-fat kernel vectors.
-	 */
-	bl	2f
-	b	.
-2:
-	tramp_map_kernel	x30
-#ifdef CONFIG_RANDOMIZE_BASE
-	adr	x30, tramp_vectors + PAGE_SIZE
-#ifndef CONFIG_ARCH_MSM8996
-	isb
-#endif
-	ldr	x30, [x30]
-#else
-	ldr	x30, =vectors
-#endif
-	prfm	plil1strm, [x30, #(1b - tramp_vectors)]
-	msr	vbar_el1, x30
-	add	x30, x30, #(1b - tramp_vectors)
-	isb
-	ret
-	.endm
-
-	.macro tramp_exit, regsize = 64
-	adr	x30, tramp_vectors
-	msr	vbar_el1, x30
-	tramp_unmap_kernel	x30
-	.if	\regsize == 64
-	mrs	x30, far_el1
-	.endif
-	eret
-	.endm
-
-	.align	11
-ENTRY(tramp_vectors)
-	.space	0x400
-
-	tramp_ventry
-	tramp_ventry
-	tramp_ventry
-	tramp_ventry
-
-	tramp_ventry	32
-	tramp_ventry	32
-	tramp_ventry	32
-	tramp_ventry	32
-END(tramp_vectors)
-
-ENTRY(tramp_exit_native)
-	tramp_exit
-END(tramp_exit_native)
-
-ENTRY(tramp_exit_compat)
-	tramp_exit	32
-END(tramp_exit_compat)
-
-	.ltorg
-	.popsection				// .entry.tramp.text
-#ifdef CONFIG_RANDOMIZE_BASE
-	.pushsection ".rodata", "a"
-	.align PAGE_SHIFT
-	.globl	__entry_tramp_data_start
-__entry_tramp_data_start:
-	.quad	vectors
-	.popsection				// .rodata
-#endif /* CONFIG_RANDOMIZE_BASE */
-#endif /* CONFIG_UNMAP_KERNEL_AT_EL0 */
-
-/*
- * Special system call wrappers.
- */
-ENTRY(sys_rt_sigreturn_wrapper)
-	mov	x0, sp
-	b	sys_rt_sigreturn
-ENDPROC(sys_rt_sigreturn_wrapper)
+NOKPROBE(ret_from_fork)

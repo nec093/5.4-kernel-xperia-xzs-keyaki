@@ -24,7 +24,7 @@
 #include <asm/assembler.h>
 #include <asm/cpufeature.h>
 #include <asm/alternative.h>
-#include <asm/uaccess.h>
+#include <asm/asm-uaccess.h>
 
  /*
  *     flush_dcache_louis()
@@ -224,6 +224,7 @@ ENDPROC(__clean_dcache_area_pou)
  *	also cleaned to PoC to prevent data loss.
  *
  *	- kaddr   - kernel address
+ *	- size    - size in question
  */
 ENTRY(__inval_dcache_area)
 	/* FALLTHROUGH */
@@ -233,7 +234,8 @@ ENTRY(__inval_dcache_area)
  *	- start   - virtual start address of region
  *	- size    - size in question
  */
-ENTRY(__dma_inv_area)
+	.globl	__dma_inv_area
+__dma_inv_area:
 	add	x1, x1, x0
 	dcache_line_size x2, x3
 	sub	x3, x2, #1
@@ -288,6 +290,9 @@ ENDPROC(__dma_clean_area)
  *	- size    - size in question
  */
 ENTRY(__clean_dcache_area_pop)
+	alternative_if_not ARM64_HAS_DCPOP
+	b	__clean_dcache_area_poc
+	alternative_else_nop_endif
 	dcache_by_line_op cvap, sy, x0, x1, x2, x3
 	ret
 ENDPIPROC(__clean_dcache_area_pop)
