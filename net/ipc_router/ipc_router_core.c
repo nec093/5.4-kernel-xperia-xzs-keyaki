@@ -20,6 +20,8 @@
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/sched.h>
+#include <uapi/linux/sched/types.h>
+#include <linux/of.h>
 #include <linux/poll.h>
 #include <linux/pm.h>
 #include <linux/platform_device.h>

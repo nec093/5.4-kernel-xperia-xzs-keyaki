@@ -29,7 +29,6 @@
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
-//#include "ext4_ice.h"
 
 static struct kmem_cache *io_end_cachep;
 
@@ -364,7 +363,6 @@ void ext4_io_submit(struct ext4_io_submit *io)
 void ext4_io_submit_init(struct ext4_io_submit *io,
 			 struct writeback_control *wbc)
 {
-	io->io_flags = 0;
 	io->io_wbc = wbc;
 	io->io_bio = NULL;
 	io->io_end = NULL;

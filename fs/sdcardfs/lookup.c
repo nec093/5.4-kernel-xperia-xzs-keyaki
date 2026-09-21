@@ -19,7 +19,7 @@
  */
 
 #define __FS_HAS_ENCRYPTION IS_ENABLED(CONFIG_FS_ENCRYPTION)
-#include <linux/fscrypt.h>
+#include <linux/fscrypt_common.h>
 #include "sdcardfs.h"
 #include "linux/delay.h"
 

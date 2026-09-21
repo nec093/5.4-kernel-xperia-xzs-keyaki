@@ -23,6 +23,7 @@
 
 struct device;
 struct file_operations;
+struct srcu_struct;
 
 struct debugfs_blob_wrapper {
 	void *data;
@@ -107,10 +108,10 @@ struct dentry *debugfs_create_automount(const char *name,
 void debugfs_remove(struct dentry *dentry);
 void debugfs_remove_recursive(struct dentry *dentry);
 
-const struct file_operations *debugfs_real_fops(const struct file *filp);
+int debugfs_use_file_start(const struct dentry *dentry, int *srcu_idx)
+	__acquires(&debugfs_srcu);
 
-int debugfs_file_get(struct dentry *dentry);
-void debugfs_file_put(struct dentry *dentry);
+void debugfs_use_file_finish(int srcu_idx) __releases(&debugfs_srcu);
 
 ssize_t debugfs_attr_read(struct file *file, char __user *buf,
 			size_t len, loff_t *ppos);
@@ -239,12 +240,15 @@ static inline void debugfs_remove(struct dentry *dentry)
 static inline void debugfs_remove_recursive(struct dentry *dentry)
 { }
 
-static inline int debugfs_file_get(struct dentry *dentry)
+static inline int debugfs_use_file_start(const struct dentry *dentry,
+					int *srcu_idx)
+	__acquires(&debugfs_srcu)
 {
 	return 0;
 }
 
-static inline void debugfs_file_put(struct dentry *dentry)
+static inline void debugfs_use_file_finish(int srcu_idx)
+	__releases(&debugfs_srcu)
 { }
 
 static inline ssize_t debugfs_attr_read(struct file *file, char __user *buf,

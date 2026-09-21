@@ -970,21 +970,16 @@ resizefs_out:
 		return err;
 	}
 
-	case FIDTRIM:
 	case FITRIM:
 	{
 		struct request_queue *q = bdev_get_queue(sb->s_bdev);
 		struct fstrim_range range;
 		int ret = 0;
-		int flags  = cmd == FIDTRIM ? BLKDEV_DISCARD_SECURE : 0;
 
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
 		if (!blk_queue_discard(q))
-			return -EOPNOTSUPP;
-
-		if ((flags & BLKDEV_DISCARD_SECURE) && !blk_queue_secure_erase(q))
 			return -EOPNOTSUPP;
 
 		/*
@@ -998,9 +993,7 @@ resizefs_out:
 		    sizeof(range)))
 			return -EFAULT;
 
-		range.minlen = max((unsigned int)range.minlen,
-				   q->limits.discard_granularity);
-		ret = ext4_trim_fs(sb, &range, flags);
+		ret = ext4_trim_fs(sb, &range);
 		if (ret < 0)
 			return ret;
 
@@ -1014,8 +1007,8 @@ resizefs_out:
 		return ext4_ext_precache(inode);
 
 	case EXT4_IOC_SET_ENCRYPTION_POLICY:
-//		if (!ext4_has_feature_encrypt(sb))
-//			return -EOPNOTSUPP;
+		if (!ext4_has_feature_encrypt(sb))
+			return -EOPNOTSUPP;
 		return fscrypt_ioctl_set_policy(filp, (const void __user *)arg);
 
 	case EXT4_IOC_GET_ENCRYPTION_PWSALT: {

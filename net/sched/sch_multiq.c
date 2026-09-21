@@ -238,7 +238,7 @@ static int multiq_tune(struct Qdisc *sch, struct nlattr *opt)
 static int multiq_init(struct Qdisc *sch, struct nlattr *opt)
 {
 	struct multiq_sched_data *q = qdisc_priv(sch);
-	int i;
+	int i, err;
 
 	q->queues = NULL;
 

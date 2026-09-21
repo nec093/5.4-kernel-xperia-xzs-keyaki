@@ -37,8 +37,6 @@
 #include <linux/uio.h>
 #include <linux/atomic.h>
 #include <linux/prefetch.h>
-#define __FS_HAS_ENCRYPTION IS_ENABLED(CONFIG_F2FS_FS_ENCRYPTION)
-#include <linux/fscrypt.h>
 
 /*
  * How many user pages to map in one call to get_user_pages().  This determines
@@ -454,23 +452,6 @@ dio_bio_alloc(struct dio *dio, struct dio_submit *sdio,
 	sdio->logical_offset_in_bio = sdio->cur_page_fs_offset;
 }
 
-#ifdef CONFIG_PFK
-static bool is_inode_filesystem_type(const struct inode *inode,
-					const char *fs_type)
-{
-	if (!inode || !fs_type)
-		return false;
-
-	if (!inode->i_sb)
-		return false;
-
-	if (!inode->i_sb->s_type)
-		return false;
-
-	return (strcmp(inode->i_sb->s_type->name, fs_type) == 0);
-}
-#endif
-
 /*
  * In the AIO read case we speculatively dirty the pages before starting IO.
  * During IO completion, any of these pages which happen to have been written
@@ -505,20 +486,6 @@ static inline void dio_bio_submit(struct dio *dio, struct dio_submit *sdio)
 	sdio->logical_offset_in_bio = 0;
 }
 
-struct inode *dio_bio_get_inode(struct bio *bio)
-{
-	struct inode *inode = NULL;
-
-	if (bio == NULL)
-		return NULL;
-
-#ifdef CONFIG_PFK
-	inode = bio->bi_dio_inode;
-#endif
-
-	return inode;
-}
-EXPORT_SYMBOL(dio_bio_get_inode);
 /*
  * Release any resources in case of a failure
  */

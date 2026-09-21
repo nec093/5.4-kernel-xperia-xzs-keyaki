@@ -214,12 +214,6 @@ int ext4_setup_system_zone(struct super_block *sb)
 		if (ret)
 			return ret;
 	}
-	if (ext4_has_feature_journal(sb) && sbi->s_es->s_journal_inum) {
-		ret = ext4_protect_reserved_inode(sb,
-				le32_to_cpu(sbi->s_es->s_journal_inum));
-		if (ret)
-			return ret;
-	}
 
 	if (test_opt(sb, DEBUG))
 		debug_print_tree(EXT4_SB(sb));

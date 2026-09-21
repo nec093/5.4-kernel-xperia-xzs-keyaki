@@ -195,17 +195,11 @@ unsigned int nf_conntrack_htable_size __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_htable_size);
 
 unsigned int nf_conntrack_max __read_mostly;
-
 seqcount_t nf_conntrack_generation __read_mostly;
 
 unsigned int nf_conntrack_pkt_threshold __read_mostly;
 EXPORT_SYMBOL(nf_conntrack_pkt_threshold);
-
-DEFINE_PER_CPU(struct nf_conn, nf_conntrack_untracked);
-EXPORT_PER_CPU_SYMBOL(nf_conntrack_untracked);
-
-unsigned int nf_conntrack_hash_rnd __read_mostly;
-EXPORT_SYMBOL(nf_conntrack_hash_rnd);
+static unsigned int nf_conntrack_hash_rnd __read_mostly;
 
 static u32 hash_conntrack_raw(const struct nf_conntrack_tuple *tuple,
 			      const struct net *net)
@@ -353,7 +347,7 @@ EXPORT_SYMBOL_GPL(nf_ct_get_id);
 static void
 clean_from_lists(struct nf_conn *ct)
 {
-	pr_debug("clean_from_lists(%pK)\n", ct);
+	pr_debug("clean_from_lists(%p)\n", ct);
 	hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode);
 	hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode);
 
@@ -479,18 +473,14 @@ destroy_conntrack(struct nf_conntrack *nfct)
 			delete_entry(ct);
 	}
 
-	/* To make sure we don't get any weird locking issues here:
-	 * destroy_conntrack() MUST NOT be called with a write lock
-	 * to nf_conntrack_lock!!! -HW
-	 */
-	rcu_read_lock();
 	l4proto = __nf_ct_l4proto_find(nf_ct_l3num(ct), nf_ct_protonum(ct));
 	if (l4proto->destroy)
 		l4proto->destroy(ct);
 
 	local_bh_disable();
 
-	pr_debug("freeing item in the SIP list\n");
+	pr_debug("freeing item in the SIP list
+");
 	list_for_each_safe(sip_node_list, sip_node_save_list,
 			   &ct->sip_segment_list) {
 		sip_node = list_entry(sip_node_list, struct sip_list, list);
@@ -511,7 +501,7 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	if (ct->master)
 		nf_ct_put(ct->master);
 
-	pr_debug("destroy_conntrack: returning ct=%pK to slab\n", ct);
+	pr_debug("destroy_conntrack: returning ct=%p to slab\n", ct);
 	nf_conntrack_free(ct);
 }
 
@@ -1265,6 +1255,7 @@ __nf_conntrack_alloc(struct net *net,
 #if defined(CONFIG_IP_NF_TARGET_NATTYPE_MODULE)
 	ct->nattype_entry = 0;
 #endif
+
 	/* Because we use RCU lookups, we set ct_general.use to zero before
 	 * this is inserted in any list.
 	 */
@@ -1373,7 +1364,7 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 		spin_lock(&nf_conntrack_expect_lock);
 		exp = nf_ct_find_expectation(net, zone, tuple);
 		if (exp) {
-			pr_debug("expectation arrives ct=%pK exp=%pK\n",
+			pr_debug("expectation arrives ct=%p exp=%p\n",
 				 ct, exp);
 			/* Welcome, Mr. Bond.  We've been expecting you... */
 			__set_bit(IPS_EXPECTED_BIT, &ct->status);
@@ -1394,7 +1385,7 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 #endif
 /* Initialize the NAT type entry. */
 #if defined(CONFIG_IP_NF_TARGET_NATTYPE_MODULE)
-		ct->nattype_entry = 0;
+			ct->nattype_entry = 0;
 #endif
 			NF_CT_STAT_INC(net, expect_new);
 		}
@@ -1607,7 +1598,7 @@ void nf_conntrack_alter_reply(struct nf_conn *ct,
 	/* Should be unconfirmed, so not in hash table yet */
 	WARN_ON(nf_ct_is_confirmed(ct));
 
-	pr_debug("Altering reply tuple of %pK to ", ct);
+	pr_debug("Altering reply tuple of %p to ", ct);
 	nf_ct_dump_tuple(newreply);
 
 	ct->tuplehash[IP_CT_DIR_REPLY].tuple = *newreply;
@@ -1627,6 +1618,10 @@ void __nf_ct_refresh_acct(struct nf_conn *ct,
 			  unsigned long extra_jiffies,
 			  int do_acct)
 {
+#if defined(CONFIG_IP_NF_TARGET_NATTYPE_MODULE)
+	bool (*nattype_ref_timer)(unsigned long nattype, unsigned long timeout_value);
+#endif
+
 	WARN_ON(!skb);
 
 	/* Only update if this is not a fixed timeout */
@@ -1647,20 +1642,19 @@ void __nf_ct_refresh_acct(struct nf_conn *ct,
 
 acct:
 	if (do_acct) {
+		struct nf_conn_acct *acct;
+
+		nf_ct_acct_update(ct, ctinfo, skb->len);
+
 		acct = nf_conn_acct_find(ct);
-		if (acct) {
+		if (acct && nf_conntrack_pkt_threshold > 0) {
 			struct nf_conn_counter *counter = acct->counter;
+			u64 pkts;
 
-			atomic64_inc(&counter[CTINFO2DIR(ctinfo)].packets);
-			atomic64_add(skb->len, &counter
-					[CTINFO2DIR(ctinfo)].bytes);
-
-			pkts =
-			atomic64_read(&counter[CTINFO2DIR(ctinfo)].packets) +
-			atomic64_read(&counter[!CTINFO2DIR(ctinfo)].packets);
+			pkts = atomic64_read(&counter[CTINFO2DIR(ctinfo)].packets) +
+			       atomic64_read(&counter[!CTINFO2DIR(ctinfo)].packets);
 			/* Report if the packet threshold is reached. */
-			if ((nf_conntrack_pkt_threshold > 0) &&
-			    (pkts == nf_conntrack_pkt_threshold)) {
+			if (pkts == nf_conntrack_pkt_threshold) {
 				nf_conntrack_event_cache(IPCT_COUNTER, ct);
 				nf_conntrack_event_cache(IPCT_PROTOINFO, ct);
 				nf_ct_deliver_cached_events(ct);
@@ -2098,7 +2092,7 @@ int nf_conntrack_hash_resize(unsigned int hashsize)
 	return 0;
 }
 
-int nf_conntrack_set_hashsize(const char *val, const struct kernel_param *kp)
+int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp)
 {
 	unsigned int hashsize;
 	int rc;
@@ -2242,7 +2236,7 @@ int nf_conntrack_init_start(void)
 		goto err_proto;
 
 	conntrack_gc_work_init(&conntrack_gc_work);
-	queue_delayed_work(system_power_efficient_wq, &conntrack_gc_work.dwork, HZ);
+	queue_delayed_work(system_long_wq, &conntrack_gc_work.dwork, HZ);
 
 	return 0;
 
