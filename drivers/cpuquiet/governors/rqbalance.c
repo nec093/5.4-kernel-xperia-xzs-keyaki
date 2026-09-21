@@ -25,6 +25,7 @@
 /* Note: NEVER suspend the runqueue averaging worker! */
 
 #include <linux/kernel.h>
+#include <linux/sched/stat.h>
 #include <linux/cpufreq.h>
 #include <linux/cpuquiet.h>
 #include <linux/cpumask.h>

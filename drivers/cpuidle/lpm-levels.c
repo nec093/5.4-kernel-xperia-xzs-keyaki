@@ -22,6 +22,8 @@
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
 #include <linux/cpu.h>
+#include <linux/sched/clock.h>
+#include <linux/sched/stat.h>
 #include <linux/of.h>
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
@@ -74,7 +76,7 @@ enum debug_event {
 };
 
 struct lpm_debug {
-	cycle_t time;
+	u64 time;
 	enum debug_event evt;
 	int cpu;
 	uint32_t arg1;
@@ -724,13 +726,13 @@ static unsigned int get_next_online_cpu(bool from_idle)
 
 	if (!from_idle)
 		return next_cpu;
-	next_event.tv64 = KTIME_MAX;
+	next_event = KTIME_MAX;
 	for_each_online_cpu(cpu) {
 		ktime_t *next_event_c;
 
 		next_event_c = get_next_event_cpu(cpu);
-		if (next_event_c->tv64 < next_event.tv64) {
-			next_event.tv64 = next_event_c->tv64;
+		if ((*next_event_c) < next_event) {
+			next_event = (*next_event_c);
 			next_cpu = cpu;
 		}
 	}
@@ -749,7 +751,7 @@ static uint64_t get_cluster_sleep_time(struct lpm_cluster *cluster,
 	if (!from_idle)
 		return ~0ULL;
 
-	next_event.tv64 = KTIME_MAX;
+	next_event = KTIME_MAX;
 	cpumask_and(&online_cpus_in_cluster,
 			&cluster->num_children_in_sync, cpu_online_mask);
 
@@ -757,8 +759,8 @@ static uint64_t get_cluster_sleep_time(struct lpm_cluster *cluster,
 		ktime_t *next_event_c;
 
 		next_event_c = get_next_event_cpu(cpu);
-		if (next_event_c->tv64 < next_event.tv64) {
-			next_event.tv64 = next_event_c->tv64;
+		if ((*next_event_c) < next_event) {
+			next_event = (*next_event_c);
 		}
 
 		if (from_idle && lpm_prediction && cluster->lpm_prediction) {
@@ -1519,7 +1521,6 @@ static struct cpuidle_governor lpm_governor = {
 	.name =		"qcom",
 	.rating =	30,
 	.select =	lpm_cpuidle_select,
-	.owner =	THIS_MODULE,
 };
 
 static int cluster_cpuidle_register(struct lpm_cluster *cl)
@@ -1560,7 +1561,7 @@ static int cluster_cpuidle_register(struct lpm_cluster *cl)
 			st->target_residency = 0;
 			st->enter = lpm_cpuidle_enter;
 			if (i == lpm_cpu->nlevels - 1)
-				st->enter_freeze = lpm_cpuidle_freeze;
+				st->enter_s2idle = lpm_cpuidle_freeze;
 		}
 
 		lpm_cpu->drv->state_count = lpm_cpu->nlevels;
@@ -1710,7 +1711,7 @@ static const struct platform_suspend_ops lpm_suspend_ops = {
 	.wake = lpm_suspend_wake,
 };
 
-static const struct platform_freeze_ops lpm_freeze_ops = {
+static const struct platform_s2idle_ops lpm_freeze_ops = {
 	.prepare = lpm_suspend_prepare,
 	.restore = lpm_suspend_wake,
 };
@@ -1743,7 +1744,7 @@ static int lpm_probe(struct platform_device *pdev)
 	 * how late lpm_levels gets initialized.
 	 */
 	suspend_set_ops(&lpm_suspend_ops);
-	freeze_set_ops(&lpm_freeze_ops);
+	s2idle_set_ops(&lpm_freeze_ops);
 	hrtimer_init(&lpm_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	for_each_possible_cpu(cpu) {
 		cpu_histtimer = &per_cpu(histtimer, cpu);

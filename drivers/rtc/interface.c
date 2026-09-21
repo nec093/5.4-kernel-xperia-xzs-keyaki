@@ -419,8 +419,8 @@ int rtc_initialize_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 
 		rtc->aie_timer.enabled = 1;
 		timerqueue_add(&rtc->timerqueue, &rtc->aie_timer.node);
-	} else if (alarm->enabled && (rtc_tm_to_ktime(now).tv64 >=
-			rtc->aie_timer.node.expires.tv64)){
+	} else if (alarm->enabled && (rtc_tm_to_ktime(now) >=
+			rtc->aie_timer.node.expires)){
 		rtc_alarm_disable(rtc);
 	}
 

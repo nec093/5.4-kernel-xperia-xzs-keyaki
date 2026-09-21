@@ -7650,17 +7650,17 @@ static bool bma2x2_detect_sig_motion(struct bma2x2_data *bma2x2)
 	ts = ktime_get_boottime();
 	dev_dbg(&bma2x2->bma2x2_client->dev,
 		"ts=%lld, lastns=%lld, delta=%lld, det_cnt=%d\n",
-		ts.tv64, last_ns, (ts.tv64 - last_ns), det_cnt);
+		ts, last_ns, (ts - last_ns), det_cnt);
 	if (last_ns == 0) {
-		last_ns = ts.tv64;
+		last_ns = ts;
 		return false;
 	}
-	if (ts.tv64 - last_ns < BMA2X2_SMD_DET_TIME_NS)
+	if (ts - last_ns < BMA2X2_SMD_DET_TIME_NS)
 		det_cnt++;
 	else
 		det_cnt = 0;
 
-	last_ns = ts.tv64;
+	last_ns = ts;
 
 	if (det_cnt >= BMA2X2_SMD_DET_CNT) {
 		det_cnt = 0;
