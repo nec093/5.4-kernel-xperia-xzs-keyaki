@@ -688,11 +688,14 @@ CONFIG_PHY_QCOM_QMP=y
 CONFIG_ANDROID=y
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_SENSORS_SSC=y
-CONFIG_CPU_QUIET=y
-# CONFIG_CPU_QUIET_GOVERNOR_USERSPACE is not set
-# CONFIG_CPU_QUIET_GOVERNOR_RUNNABLE is not set
-CONFIG_CPU_QUIET_DEFAULT_GOV_RQBALANCE=y
-CONFIG_CPU_QUIET_MSM=y
+# CONFIG_CPU_QUIET is not set
+# cpuquiet's rqbalance governor calls device_offline()->cpu_down() from a
+# workqueue (cpuquiet_work_func) whenever load allows; on 4.14 that hangs
+# forever inside _cpu_down()'s percpu_down_write(cpu_hotplug_lock) (seen
+# live: kworker stuck there, other tasks queue up behind it on
+# cpus_read_lock() until system_server's Watchdog kills itself). 4.9-era
+# CAF code vs 4.14's percpu-rwsem hotplug lock; root cause not yet found.
+# Disabled for Phase A, like SCHED_TUNE/EAS/WALT -- TODO for Phase B.
 CONFIG_EXT4_FS=y
 CONFIG_EXT4_FS_SECURITY=y
 CONFIG_EXT4_ENCRYPTION=y
