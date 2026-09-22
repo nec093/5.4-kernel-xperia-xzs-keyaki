@@ -191,6 +191,27 @@ static struct platform_device *of_platform_device_create_pdata(
 	of_msi_configure(&dev->dev, dev->dev.of_node);
 	of_reserved_mem_device_init_by_idx(&dev->dev, dev->dev.of_node, 0);
 
+	/*
+	 * Devices created this way (of_platform_populate() called from a
+	 * parent driver's own probe, e.g. kgsl's gfx3d_user/gfx3d_secure or
+	 * mdss's smmu context-bank children) come into existence long after
+	 * every arm-smmu instance has already run its one-shot, probe-time
+	 * sweep of the platform bus that assigns dev->iommu_fwspec (see
+	 * arm_smmu_device_dt_probe()'s bus_for_each_dev() call). That sweep
+	 * never sees devices created here, so dev->iommu_fwspec would stay
+	 * unset. It must be configured *before* of_device_add() below: that
+	 * call's device_add() fires a BUS_NOTIFY_ADD_DEVICE notifier which
+	 * makes the iommu core call arm_smmu_ops->add_device() for this
+	 * device exactly once, right then -- with fwspec still NULL it fails
+	 * (-ENXIO) and is never retried, so iommu_attach_device() later would
+	 * always fail too (-ENODEV, fwspec->iommu_priv never got set).
+	 * Configure devices with an "iommus" reference as mainline's later
+	 * of_dma_configure() does automatically, before that one shot fires.
+	 */
+	if (!dev->dev.iommu_fwspec &&
+	    of_find_property(np, "iommus", NULL))
+		of_iommu_configure(&dev->dev, np);
+
 	if (of_device_add(dev) != 0) {
 		platform_device_put(dev);
 		goto err_clear_flag;

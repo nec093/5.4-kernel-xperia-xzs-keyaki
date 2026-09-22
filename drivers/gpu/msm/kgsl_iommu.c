@@ -20,6 +20,7 @@
 #include <linux/msm_kgsl.h>
 #include <linux/ratelimit.h>
 #include <linux/of_platform.h>
+#include <linux/of_iommu.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
 #include <linux/compat.h>
@@ -370,12 +371,31 @@ static int _attach_pt(struct kgsl_iommu_pt *iommu_pt,
 	if (iommu_pt->attached)
 		return 0;
 
+	/*
+	 * ctx->dev (the "qcom,smmu-kgsl-cb" child device) is created late,
+	 * via of_platform_populate() during this driver's own probe -- long
+	 * after every arm-smmu instance has already run its one-shot,
+	 * probe-time-only sweep of the platform bus that assigns
+	 * dev->iommu_fwspec (see arm_smmu_device_dt_probe()). That sweep
+	 * therefore never sees this device, and dev->iommu_fwspec is left
+	 * NULL forever, so iommu_attach_device() below would always fail
+	 * with -ENXIO ("cannot attach to SMMU, is it on the same bus?").
+	 * Configure it lazily here, at first actual attach (driven by
+	 * userspace opening the device), by which point the target SMMU
+	 * (arm,smmu-kgsl@...) is guaranteed to have already probed.
+	 */
+	if (!ctx->dev->iommu_fwspec)
+		of_iommu_configure(ctx->dev, ctx->dev->of_node);
+
 	_iommu_sync_mmu_pc(true);
 	ret = iommu_attach_device(iommu_pt->domain, ctx->dev);
 	_iommu_sync_mmu_pc(false);
 
 	if (ret == 0)
 		iommu_pt->attached = true;
+	else
+		KGSL_CORE_ERR("XZDBG iommu_attach_device(%s) failed: %d\n",
+			dev_name(ctx->dev), ret);
 
 	return ret;
 }
@@ -1601,15 +1621,20 @@ static int _setup_user_context(struct kgsl_mmu *mmu)
 		if (IS_ERR(mmu->defaultpagetable)) {
 			ret = PTR_ERR(mmu->defaultpagetable);
 			mmu->defaultpagetable = NULL;
+			KGSL_CORE_ERR("XZDBG kgsl_mmu_getpagetable failed: %d\n",
+				ret);
 			return ret;
 		} else if (mmu->defaultpagetable == NULL) {
+			KGSL_CORE_ERR("XZDBG kgsl_mmu_getpagetable NULL\n");
 			return -ENOMEM;
 		}
 	}
 
 	iommu_pt = mmu->defaultpagetable->priv;
-	if (iommu_pt == NULL)
+	if (iommu_pt == NULL) {
+		KGSL_CORE_ERR("XZDBG defaultpagetable->priv NULL\n");
 		return -ENODEV;
+	}
 
 	ret = _attach_pt(iommu_pt, ctx);
 	if (ret)
