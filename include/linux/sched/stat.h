@@ -8,7 +8,7 @@
  * Various counters maintained by the scheduler and fork(),
  * exposed via /proc, sys.c or used by drivers via these APIs.
  *
- * ( Note that all these values are aquired without locking,
+ * ( Note that all these values are acquired without locking,
  *   so they can only be relied on in narrow circumstances. )
  */
 
@@ -20,47 +20,6 @@ extern unsigned long nr_running(void);
 extern bool single_task_running(void);
 extern unsigned long nr_iowait(void);
 extern unsigned long nr_iowait_cpu(int cpu);
-#ifdef CONFIG_CPU_QUIET
-extern u64 nr_running_integral(unsigned int cpu);
-#endif
-
-#ifdef CONFIG_SMP
-extern void sched_update_nr_prod(int cpu, long delta, bool inc);
-extern void sched_get_nr_running_avg(int *avg, int *iowait_avg, int *big_avg,
-					 unsigned int *max_nr,
-					 unsigned int *big_max_nr);
-extern unsigned int sched_get_cpu_util(int cpu);
-extern u64 sched_get_cpu_last_busy_time(int cpu);
-extern u32 sched_get_wake_up_idle(struct task_struct *p);
-extern int sched_set_wake_up_idle(struct task_struct *p, int wake_up_idle);
-#else
-static inline void sched_update_nr_prod(int cpu, long delta, bool inc)
-{
-}
-static inline void sched_get_nr_running_avg(int *avg, int *iowait_avg,
-				int *big_avg, unsigned int *max_nr,
-				unsigned int *big_max_nr)
-{
-}
-static inline unsigned int sched_get_cpu_util(int cpu)
-{
-	return 0;
-}
-static inline u64 sched_get_cpu_last_busy_time(int cpu)
-{
-	return 0;
-}
-static inline u32 sched_get_wake_up_idle(struct task_struct *p)
-{
-	return 0;
-}
-static inline int sched_set_wake_up_idle(struct task_struct *p,
-					 int wake_up_idle)
-{
-	return 0;
-}
-#endif
-extern void get_iowait_load(unsigned long *nr_waiters, unsigned long *load);
 
 static inline int sched_info_on(void)
 {

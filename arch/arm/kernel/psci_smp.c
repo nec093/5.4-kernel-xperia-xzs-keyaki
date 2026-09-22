@@ -1,12 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * Copyright (C) 2012 ARM Limited
  *
@@ -98,24 +91,18 @@ int psci_cpu_kill(unsigned int cpu)
 	for (i = 0; i < 10; i++) {
 		err = psci_ops.affinity_info(cpu_logical_map(cpu), 0);
 		if (err == PSCI_0_2_AFFINITY_LEVEL_OFF) {
-			pr_debug("CPU%d killed.\n", cpu);
+			pr_info("CPU%d killed.\n", cpu);
 			return 1;
 		}
 
 		msleep(10);
-		pr_debug("Retrying again to check for CPU kill\n");
+		pr_info("Retrying again to check for CPU kill\n");
 	}
 
 	pr_warn("CPU%d may not have shut down cleanly (AFFINITY_INFO reports %d)\n",
 			cpu, err);
 	/* Make platform_cpu_kill() fail. */
 	return 0;
-}
-
-static bool psci_cpu_can_disable(unsigned int cpu)
-{
-	/*Hotplug of any CPU is supported*/
-	return true;
 }
 
 #endif
@@ -132,6 +119,5 @@ const struct smp_operations psci_smp_ops __initconst = {
 	.cpu_disable		= psci_cpu_disable,
 	.cpu_die		= psci_cpu_die,
 	.cpu_kill		= psci_cpu_kill,
-	.cpu_can_disable	= psci_cpu_can_disable,
 #endif
 };

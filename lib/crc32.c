@@ -206,8 +206,8 @@ u32 __pure __weak __crc32c_le(u32 crc, unsigned char const *p, size_t len)
 EXPORT_SYMBOL(crc32_le);
 EXPORT_SYMBOL(__crc32c_le);
 
-u32 crc32_le_base(u32, unsigned char const *, size_t) __alias(crc32_le);
-u32 __crc32c_le_base(u32, unsigned char const *, size_t) __alias(__crc32c_le);
+u32 __pure crc32_le_base(u32, unsigned char const *, size_t) __alias(crc32_le);
+u32 __pure __crc32c_le_base(u32, unsigned char const *, size_t) __alias(__crc32c_le);
 
 /*
  * This multiplies the polynomials x and y modulo the given modulus.
@@ -229,7 +229,7 @@ static u32 __attribute_const__ gf2_multiply(u32 x, u32 y, u32 modulus)
 }
 
 /**
- * crc32_generic_shift - Append len 0 bytes to crc, in logarithmic time
+ * crc32_generic_shift - Append @len 0 bytes to crc, in logarithmic time
  * @crc: The original little-endian CRC (i.e. lsbit is x^31 coefficient)
  * @len: The number of bytes. @crc is multiplied by x^(8*@len)
  * @polynomial: The modulus used to reduce the result to 32 bits.

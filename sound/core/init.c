@@ -1,22 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Initialization routines
  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
- *
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 #include <linux/init.h>
@@ -49,16 +34,13 @@ static const struct file_operations snd_shutdown_f_ops;
 
 /* locked for registering/using */
 static DECLARE_BITMAP(snd_cards_lock, SNDRV_CARDS);
-struct snd_card *snd_cards[SNDRV_CARDS];
-EXPORT_SYMBOL(snd_cards);
+static struct snd_card *snd_cards[SNDRV_CARDS];
 
 static DEFINE_MUTEX(snd_card_mutex);
 
 static char *slots[SNDRV_CARDS];
 module_param_array(slots, charp, NULL, 0444);
 MODULE_PARM_DESC(slots, "Module names assigned to the slots.");
-
-#define SND_CARD_STATE_MAX_LEN 16
 
 /* return non-zero if the given index is reserved for the given
  * module via slots option
@@ -100,72 +82,6 @@ static int module_slot_match(struct module *module, int idx)
 #if IS_ENABLED(CONFIG_SND_MIXER_OSS)
 int (*snd_mixer_oss_notify_callback)(struct snd_card *card, int free_flag);
 EXPORT_SYMBOL(snd_mixer_oss_notify_callback);
-#endif
-
-#ifdef CONFIG_SND_PROC_FS
-static void snd_card_id_read(struct snd_info_entry *entry,
-			     struct snd_info_buffer *buffer)
-{
-	snd_iprintf(buffer, "%s\n", entry->card->id);
-}
-
-static ssize_t snd_card_state_read(struct snd_info_entry *entry,
-			       void *file_private_data, struct file *file,
-			       char __user *buf, size_t count, loff_t pos)
-{
-	int len;
-	char buffer[SND_CARD_STATE_MAX_LEN];
-
-	/* make sure offline is updated prior to wake up */
-	rmb();
-	len = snprintf(buffer, sizeof(buffer), "%s\n",
-		       entry->card->offline ? "OFFLINE" : "ONLINE");
-	return simple_read_from_buffer(buf, count, &pos, buffer, len);
-}
-
-static unsigned int snd_card_state_poll(struct snd_info_entry *entry,
-					void *private_data, struct file *file,
-					poll_table *wait)
-{
-	poll_wait(file, &entry->card->offline_poll_wait, wait);
-	if (xchg(&entry->card->offline_change, 0))
-		return POLLIN | POLLPRI | POLLRDNORM;
-	else
-		return 0;
-}
-
-static struct snd_info_entry_ops snd_card_state_proc_ops = {
-	.read = snd_card_state_read,
-	.poll = snd_card_state_poll,
-};
-
-static int init_info_for_card(struct snd_card *card)
-{
-	struct snd_info_entry *entry, *entry_state;
-
-	entry = snd_info_create_card_entry(card, "id", card->proc_root);
-	if (!entry) {
-		dev_dbg(card->dev, "unable to create card entry\n");
-		return -ENOMEM;
-	}
-	entry->c.text.read = snd_card_id_read;
-	card->proc_id = entry;
-
-	entry_state = snd_info_create_card_entry(card, "state",
-						 card->proc_root);
-	if (!entry_state) {
-		dev_dbg(card->dev, "unable to create card entry state\n");
-		card->proc_id = NULL;
-		return -ENOMEM;
-	}
-	entry_state->size = SND_CARD_STATE_MAX_LEN;
-	entry_state->content = SNDRV_INFO_CONTENT_DATA;
-	entry_state->c.ops = &snd_card_state_proc_ops;
-
-	return snd_info_card_register(card);
-}
-#else /* !CONFIG_SND_PROC_FS */
-#define init_info_for_card(card)
 #endif
 
 static int check_empty_slot(struct module *module, int slot)
@@ -295,11 +211,12 @@ int snd_card_new(struct device *parent, int idx, const char *xid,
 	INIT_LIST_HEAD(&card->ctl_files);
 	spin_lock_init(&card->files_lock);
 	INIT_LIST_HEAD(&card->files_list);
+	mutex_init(&card->memory_mutex);
 #ifdef CONFIG_PM
 	init_waitqueue_head(&card->power_sleep);
 #endif
+	init_waitqueue_head(&card->remove_sleep);
 
-	init_waitqueue_head(&card->offline_poll_wait);
 	device_initialize(&card->card_dev);
 	card->card_dev.parent = parent;
 	card->card_dev.class = sound_class;
@@ -335,6 +252,26 @@ int snd_card_new(struct device *parent, int idx, const char *xid,
   	return err;
 }
 EXPORT_SYMBOL(snd_card_new);
+
+/**
+ * snd_card_ref - Get the card object from the index
+ * @idx: the card index
+ *
+ * Returns a card object corresponding to the given index or NULL if not found.
+ * Release the object via snd_card_unref().
+ */
+struct snd_card *snd_card_ref(int idx)
+{
+	struct snd_card *card;
+
+	mutex_lock(&snd_card_mutex);
+	card = snd_cards[idx];
+	if (card)
+		get_device(&card->card_dev);
+	mutex_unlock(&snd_card_mutex);
+	return card;
+}
+EXPORT_SYMBOL_GPL(snd_card_ref);
 
 /* return non-zero if a card is already locked */
 int snd_card_locked(int card)
@@ -387,9 +324,9 @@ static int snd_disconnect_release(struct inode *inode, struct file *file)
 	panic("%s(%p, %p) failed!", __func__, inode, file);
 }
 
-static unsigned int snd_disconnect_poll(struct file * file, poll_table * wait)
+static __poll_t snd_disconnect_poll(struct file * file, poll_table * wait)
 {
-	return POLLERR | POLLNVAL;
+	return EPOLLERR | EPOLLNVAL;
 }
 
 static long snd_disconnect_ioctl(struct file *file,
@@ -494,6 +431,35 @@ int snd_card_disconnect(struct snd_card *card)
 }
 EXPORT_SYMBOL(snd_card_disconnect);
 
+/**
+ * snd_card_disconnect_sync - disconnect card and wait until files get closed
+ * @card: card object to disconnect
+ *
+ * This calls snd_card_disconnect() for disconnecting all belonging components
+ * and waits until all pending files get closed.
+ * It assures that all accesses from user-space finished so that the driver
+ * can release its resources gracefully.
+ */
+void snd_card_disconnect_sync(struct snd_card *card)
+{
+	int err;
+
+	err = snd_card_disconnect(card);
+	if (err < 0) {
+		dev_err(card->dev,
+			"snd_card_disconnect error (%d), skipping sync\n",
+			err);
+		return;
+	}
+
+	spin_lock_irq(&card->files_lock);
+	wait_event_lock_irq(card->remove_sleep,
+			    list_empty(&card->files_list),
+			    card->files_lock);
+	spin_unlock_irq(&card->files_lock);
+}
+EXPORT_SYMBOL_GPL(snd_card_disconnect_sync);
+
 static int snd_card_do_free(struct snd_card *card)
 {
 #if IS_ENABLED(CONFIG_SND_MIXER_OSS)
@@ -503,7 +469,6 @@ static int snd_card_do_free(struct snd_card *card)
 	snd_device_free_all(card);
 	if (card->private_free)
 		card->private_free(card);
-	snd_info_free_entry(card->proc_id);
 	if (snd_info_card_free(card) < 0) {
 		dev_warn(card->dev, "unable to free card info\n");
 		/* Not fatal error */
@@ -562,13 +527,19 @@ int snd_card_free(struct snd_card *card)
 }
 EXPORT_SYMBOL(snd_card_free);
 
+/* check, if the character is in the valid ASCII range */
+static inline bool safe_ascii_char(char c)
+{
+	return isascii(c) && isalnum(c);
+}
+
 /* retrieve the last word of shortname or longname */
 static const char *retrieve_id_from_card_name(const char *name)
 {
 	const char *spos = name;
 
 	while (*name) {
-		if (isspace(*name) && isalnum(name[1]))
+		if (isspace(*name) && safe_ascii_char(name[1]))
 			spos = name + 1;
 		name++;
 	}
@@ -595,12 +566,12 @@ static void copy_valid_id_string(struct snd_card *card, const char *src,
 {
 	char *id = card->id;
 
-	while (*nid && !isalnum(*nid))
+	while (*nid && !safe_ascii_char(*nid))
 		nid++;
 	if (isdigit(*nid))
 		*id++ = isalpha(*src) ? *src : 'D';
 	while (*nid && (size_t)(id - card->id) < sizeof(card->id) - 1) {
-		if (isalnum(*nid))
+		if (safe_ascii_char(*nid))
 			*id++ = *nid;
 		nid++;
 	}
@@ -682,7 +653,7 @@ card_id_show_attr(struct device *dev,
 		  struct device_attribute *attr, char *buf)
 {
 	struct snd_card *card = container_of(dev, struct snd_card, card_dev);
-	return snprintf(buf, PAGE_SIZE, "%s\n", card->id);
+	return scnprintf(buf, PAGE_SIZE, "%s\n", card->id);
 }
 
 static ssize_t
@@ -698,7 +669,7 @@ card_id_store_attr(struct device *dev, struct device_attribute *attr,
 
 	for (idx = 0; idx < copy; idx++) {
 		c = buf[idx];
-		if (!isalnum(c) && c != '_' && c != '-')
+		if (!safe_ascii_char(c) && c != '_' && c != '-')
 			return -EINVAL;
 	}
 	memcpy(buf1, buf, copy);
@@ -715,17 +686,17 @@ card_id_store_attr(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static DEVICE_ATTR(id, S_IRUGO | S_IWUSR, card_id_show_attr, card_id_store_attr);
+static DEVICE_ATTR(id, 0644, card_id_show_attr, card_id_store_attr);
 
 static ssize_t
 card_number_show_attr(struct device *dev,
 		     struct device_attribute *attr, char *buf)
 {
 	struct snd_card *card = container_of(dev, struct snd_card, card_dev);
-	return snprintf(buf, PAGE_SIZE, "%i\n", card->number);
+	return scnprintf(buf, PAGE_SIZE, "%i\n", card->number);
 }
 
-static DEVICE_ATTR(number, S_IRUGO, card_number_show_attr, NULL);
+static DEVICE_ATTR(number, 0444, card_number_show_attr, NULL);
 
 static struct attribute *card_dev_attrs[] = {
 	&dev_attr_id.attr,
@@ -807,7 +778,10 @@ int snd_card_register(struct snd_card *card)
 	}
 	snd_cards[card->number] = card;
 	mutex_unlock(&snd_card_mutex);
-	init_info_for_card(card);
+	err = snd_info_card_register(card);
+	if (err < 0)
+		return err;
+
 #if IS_ENABLED(CONFIG_SND_MIXER_OSS)
 	if (snd_mixer_oss_notify_callback)
 		snd_mixer_oss_notify_callback(card, SND_MIXER_OSS_NOTIFY_REGISTER);
@@ -999,6 +973,8 @@ int snd_card_file_remove(struct snd_card *card, struct file *file)
 			break;
 		}
 	}
+	if (list_empty(&card->files_list))
+		wake_up_all(&card->remove_sleep);
 	spin_unlock(&card->files_lock);
 	if (!found) {
 		dev_err(card->dev, "card file remove problem (%p)\n", file);
@@ -1009,35 +985,6 @@ int snd_card_file_remove(struct snd_card *card, struct file *file)
 	return 0;
 }
 EXPORT_SYMBOL(snd_card_file_remove);
-
-/**
- * snd_card_change_online_state - mark card's online/offline state
- * @card: Card to mark
- * @online: whether online of offline
- *
- * Mutes the DAI DAC.
- */
-void snd_card_change_online_state(struct snd_card *card, int online)
-{
-	snd_printd("snd card %s state change %d -> %d\n",
-		   card->shortname, !card->offline, online);
-	card->offline = !online;
-	/* make sure offline is updated prior to wake up */
-	wmb();
-	xchg(&card->offline_change, 1);
-	wake_up_interruptible(&card->offline_poll_wait);
-}
-EXPORT_SYMBOL(snd_card_change_online_state);
-
-/**
- * snd_card_is_online_state - return true if card is online state
- * @card: Card to query
- */
-bool snd_card_is_online_state(struct snd_card *card)
-{
-	return !card->offline;
-}
-EXPORT_SYMBOL(snd_card_is_online_state);
 
 #ifdef CONFIG_PM
 /**

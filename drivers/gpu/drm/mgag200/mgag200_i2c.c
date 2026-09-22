@@ -25,10 +25,12 @@
 /*
  * Authors: Dave Airlie <airlied@redhat.com>
  */
+
 #include <linux/export.h>
-#include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
-#include <drm/drmP.h>
+#include <linux/i2c.h>
+
+#include <drm/drm_pci.h>
 
 #include "mgag200_drv.h"
 
@@ -133,7 +135,7 @@ struct mga_i2c_chan *mgag200_i2c_create(struct drm_device *dev)
 	i2c->adapter.algo_data = &i2c->bit;
 
 	i2c->bit.udelay = 10;
-	i2c->bit.timeout = 2;
+	i2c->bit.timeout = usecs_to_jiffies(2200);
 	i2c->bit.data = i2c;
 	i2c->bit.setsda		= mga_gpio_setsda;
 	i2c->bit.setscl		= mga_gpio_setscl;

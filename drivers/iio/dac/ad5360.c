@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Analog devices AD5360, AD5361, AD5362, AD5363, AD5370, AD5371, AD5373
  * multi-channel Digital to Analog Converters driver
  *
  * Copyright 2011 Analog Devices Inc.
- *
- * Licensed under the GPL-2.
  */
 
 #include <linux/device.h>
@@ -260,7 +259,7 @@ static int ad5360_update_ctrl(struct iio_dev *indio_dev, unsigned int set,
 	unsigned int clr)
 {
 	struct ad5360_state *st = iio_priv(indio_dev);
-	unsigned int ret;
+	int ret;
 
 	mutex_lock(&indio_dev->mlock);
 
@@ -425,7 +424,6 @@ static const struct iio_info ad5360_info = {
 	.read_raw = ad5360_read_raw,
 	.write_raw = ad5360_write_raw,
 	.attrs = &ad5360_attribute_group,
-	.driver_module = THIS_MODULE,
 };
 
 static const char * const ad5360_vref_name[] = {

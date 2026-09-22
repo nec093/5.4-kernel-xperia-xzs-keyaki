@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/kernel/power/swap.c
  *
@@ -7,10 +8,9 @@
  * Copyright (C) 1998,2001-2005 Pavel Machek <pavel@ucw.cz>
  * Copyright (C) 2006 Rafael J. Wysocki <rjw@sisk.pl>
  * Copyright (C) 2010-2012 Bojan Smojver <bojan@rexursive.com>
- *
- * This file is released under the GPLv2.
- *
  */
+
+#define pr_fmt(fmt) "PM: " fmt
 
 #include <linux/module.h>
 #include <linux/file.h>
@@ -238,12 +238,12 @@ static void hib_init_batch(struct hib_bio_batch *hb)
 static void hib_end_io(struct bio *bio)
 {
 	struct hib_bio_batch *hb = bio->bi_private;
-	struct page *page = bio->bi_io_vec[0].bv_page;
+	struct page *page = bio_first_page_all(bio);
 
 	if (bio->bi_status) {
-		printk(KERN_ALERT "Read-error on swap-device (%u:%u:%Lu)\n",
-				MAJOR(bio_dev(bio)), MINOR(bio_dev(bio)),
-				(unsigned long long)bio->bi_iter.bi_sector);
+		pr_alert("Read-error on swap-device (%u:%u:%Lu)\n",
+			 MAJOR(bio_dev(bio)), MINOR(bio_dev(bio)),
+			 (unsigned long long)bio->bi_iter.bi_sector);
 	}
 
 	if (bio_data_dir(bio) == WRITE)
@@ -267,14 +267,14 @@ static int hib_submit_io(int op, int op_flags, pgoff_t page_off, void *addr,
 	struct bio *bio;
 	int error = 0;
 
-	bio = bio_alloc(__GFP_RECLAIM | __GFP_HIGH, 1);
+	bio = bio_alloc(GFP_NOIO | __GFP_HIGH, 1);
 	bio->bi_iter.bi_sector = page_off * (PAGE_SIZE >> 9);
 	bio_set_dev(bio, hib_resume_bdev);
 	bio_set_op_attrs(bio, op, op_flags);
 
 	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
-		printk(KERN_ERR "PM: Adding page to bio failed at %llu\n",
-			(unsigned long long)bio->bi_iter.bi_sector);
+		pr_err("Adding page to bio failed at %llu\n",
+		       (unsigned long long)bio->bi_iter.bi_sector);
 		bio_put(bio);
 		return -EFAULT;
 	}
@@ -319,7 +319,7 @@ static int mark_swapfiles(struct swap_map_handle *handle, unsigned int flags)
 		error = hib_submit_io(REQ_OP_WRITE, REQ_SYNC,
 				      swsusp_resume_block, swsusp_header, NULL);
 	} else {
-		printk(KERN_ERR "PM: Swap header not found!\n");
+		pr_err("Swap header not found!\n");
 		error = -ENODEV;
 	}
 	return error;
@@ -374,7 +374,7 @@ static int write_page(void *buf, sector_t offset, struct hib_bio_batch *hb)
 		return -ENOSPC;
 
 	if (hb) {
-		src = (void *)__get_free_page(__GFP_RECLAIM | __GFP_NOWARN |
+		src = (void *)__get_free_page(GFP_NOIO | __GFP_NOWARN |
 		                              __GFP_NORETRY);
 		if (src) {
 			copy_page(src, buf);
@@ -382,7 +382,7 @@ static int write_page(void *buf, sector_t offset, struct hib_bio_batch *hb)
 			ret = hib_wait_io(hb); /* Free pages */
 			if (ret)
 				return ret;
-			src = (void *)__get_free_page(__GFP_RECLAIM |
+			src = (void *)__get_free_page(GFP_NOIO |
 			                              __GFP_NOWARN |
 			                              __GFP_NORETRY);
 			if (src) {
@@ -413,8 +413,7 @@ static int get_swap_writer(struct swap_map_handle *handle)
 	ret = swsusp_swap_check();
 	if (ret) {
 		if (ret != -ENOSPC)
-			printk(KERN_ERR "PM: Cannot find swap device, try "
-					"swapon -a.\n");
+			pr_err("Cannot find swap device, try swapon -a\n");
 		return ret;
 	}
 	handle->cur = (struct swap_map_page *)get_zeroed_page(GFP_KERNEL);
@@ -490,10 +489,10 @@ static int swap_writer_finish(struct swap_map_handle *handle,
 		unsigned int flags, int error)
 {
 	if (!error) {
-		flush_swap_writer(handle);
-		printk(KERN_INFO "PM: S");
+		pr_info("S");
 		error = mark_swapfiles(handle, flags);
-		printk("|\n");
+		pr_cont("|\n");
+		flush_swap_writer(handle);
 	}
 
 	if (error)
@@ -542,7 +541,7 @@ static int save_image(struct swap_map_handle *handle,
 
 	hib_init_batch(&hb);
 
-	printk(KERN_INFO "PM: Saving image data pages (%u pages)...\n",
+	pr_info("Saving image data pages (%u pages)...\n",
 		nr_to_write);
 	m = nr_to_write / 10;
 	if (!m)
@@ -557,8 +556,8 @@ static int save_image(struct swap_map_handle *handle,
 		if (ret)
 			break;
 		if (!(nr_pages % m))
-			printk(KERN_INFO "PM: Image saving progress: %3d%%\n",
-			       nr_pages / m * 10);
+			pr_info("Image saving progress: %3d%%\n",
+				nr_pages / m * 10);
 		nr_pages++;
 	}
 	err2 = hib_wait_io(&hb);
@@ -566,7 +565,7 @@ static int save_image(struct swap_map_handle *handle,
 	if (!ret)
 		ret = err2;
 	if (!ret)
-		printk(KERN_INFO "PM: Image saving done.\n");
+		pr_info("Image saving done\n");
 	swsusp_show_speed(start, stop, nr_to_write, "Wrote");
 	return ret;
 }
@@ -595,21 +594,20 @@ static int crc32_threadfn(void *data)
 	unsigned i;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
+		wait_event(d->go, atomic_read_acquire(&d->ready) ||
 		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
-			atomic_set(&d->stop, 1);
+			atomic_set_release(&d->stop, 1);
 			wake_up(&d->done);
 			break;
 		}
 		atomic_set(&d->ready, 0);
 
-		if (!IS_ENABLED(CONFIG_HIBERNATION_SKIP_CRC))
-			for (i = 0; i < d->run_threads; i++)
-				*d->crc32 = crc32_le(*d->crc32,
-						d->unc[i], *d->unc_len[i]);
-		atomic_set(&d->stop, 1);
+		for (i = 0; i < d->run_threads; i++)
+			*d->crc32 = crc32_le(*d->crc32,
+			                     d->unc[i], *d->unc_len[i]);
+		atomic_set_release(&d->stop, 1);
 		wake_up(&d->done);
 	}
 	return 0;
@@ -639,12 +637,12 @@ static int lzo_compress_threadfn(void *data)
 	struct cmp_data *d = data;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
+		wait_event(d->go, atomic_read_acquire(&d->ready) ||
 		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;
-			atomic_set(&d->stop, 1);
+			atomic_set_release(&d->stop, 1);
 			wake_up(&d->done);
 			break;
 		}
@@ -653,7 +651,7 @@ static int lzo_compress_threadfn(void *data)
 		d->ret = lzo1x_1_compress(d->unc, d->unc_len,
 		                          d->cmp + LZO_HEADER, &d->cmp_len,
 		                          d->wrk);
-		atomic_set(&d->stop, 1);
+		atomic_set_release(&d->stop, 1);
 		wake_up(&d->done);
 	}
 	return 0;
@@ -691,16 +689,16 @@ static int save_image_lzo(struct swap_map_handle *handle,
 	nr_threads = num_online_cpus() - 1;
 	nr_threads = clamp_val(nr_threads, 1, LZO_THREADS);
 
-	page = (void *)__get_free_page(__GFP_RECLAIM | __GFP_HIGH);
+	page = (void *)__get_free_page(GFP_NOIO | __GFP_HIGH);
 	if (!page) {
-		printk(KERN_ERR "PM: Failed to allocate LZO page\n");
+		pr_err("Failed to allocate LZO page\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
 
-	data = vmalloc(sizeof(*data) * nr_threads);
+	data = vmalloc(array_size(nr_threads, sizeof(*data)));
 	if (!data) {
-		printk(KERN_ERR "PM: Failed to allocate LZO data\n");
+		pr_err("Failed to allocate LZO data\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -709,7 +707,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 
 	crc = kmalloc(sizeof(*crc), GFP_KERNEL);
 	if (!crc) {
-		printk(KERN_ERR "PM: Failed to allocate crc\n");
+		pr_err("Failed to allocate crc\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -727,8 +725,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 		                            "image_compress/%u", thr);
 		if (IS_ERR(data[thr].thr)) {
 			data[thr].thr = NULL;
-			printk(KERN_ERR
-			       "PM: Cannot start compression threads\n");
+			pr_err("Cannot start compression threads\n");
 			ret = -ENOMEM;
 			goto out_clean;
 		}
@@ -750,7 +747,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 	crc->thr = kthread_run(crc32_threadfn, crc, "image_crc32");
 	if (IS_ERR(crc->thr)) {
 		crc->thr = NULL;
-		printk(KERN_ERR "PM: Cannot start CRC32 thread\n");
+		pr_err("Cannot start CRC32 thread\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -761,10 +758,9 @@ static int save_image_lzo(struct swap_map_handle *handle,
 	 */
 	handle->reqd_free_pages = reqd_free_pages();
 
-	printk(KERN_INFO
-		"PM: Using %u thread(s) for compression.\n"
-		"PM: Compressing and saving image data (%u pages)...\n",
-		nr_threads, nr_to_write);
+	pr_info("Using %u thread(s) for compression\n", nr_threads);
+	pr_info("Compressing and saving image data (%u pages)...\n",
+		nr_to_write);
 	m = nr_to_write / 10;
 	if (!m)
 		m = 1;
@@ -784,10 +780,8 @@ static int save_image_lzo(struct swap_map_handle *handle,
 				       data_of(*snapshot), PAGE_SIZE);
 
 				if (!(nr_pages % m))
-					printk(KERN_INFO
-					       "PM: Image saving progress: "
-					       "%3d%%\n",
-				               nr_pages / m * 10);
+					pr_info("Image saving progress: %3d%%\n",
+						nr_pages / m * 10);
 				nr_pages++;
 			}
 			if (!off)
@@ -795,7 +789,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 
 			data[thr].unc_len = off;
 
-			atomic_set(&data[thr].ready, 1);
+			atomic_set_release(&data[thr].ready, 1);
 			wake_up(&data[thr].go);
 		}
 
@@ -803,26 +797,25 @@ static int save_image_lzo(struct swap_map_handle *handle,
 			break;
 
 		crc->run_threads = thr;
-		atomic_set(&crc->ready, 1);
+		atomic_set_release(&crc->ready, 1);
 		wake_up(&crc->go);
 
 		for (run_threads = thr, thr = 0; thr < run_threads; thr++) {
 			wait_event(data[thr].done,
-			           atomic_read(&data[thr].stop));
+				atomic_read_acquire(&data[thr].stop));
 			atomic_set(&data[thr].stop, 0);
 
 			ret = data[thr].ret;
 
 			if (ret < 0) {
-				printk(KERN_ERR "PM: LZO compression failed\n");
+				pr_err("LZO compression failed\n");
 				goto out_finish;
 			}
 
 			if (unlikely(!data[thr].cmp_len ||
 			             data[thr].cmp_len >
 			             lzo1x_worst_compress(data[thr].unc_len))) {
-				printk(KERN_ERR
-				       "PM: Invalid LZO compressed length\n");
+				pr_err("Invalid LZO compressed length\n");
 				ret = -1;
 				goto out_finish;
 			}
@@ -848,7 +841,7 @@ static int save_image_lzo(struct swap_map_handle *handle,
 			}
 		}
 
-		wait_event(crc->done, atomic_read(&crc->stop));
+		wait_event(crc->done, atomic_read_acquire(&crc->stop));
 		atomic_set(&crc->stop, 0);
 	}
 
@@ -858,7 +851,7 @@ out_finish:
 	if (!ret)
 		ret = err2;
 	if (!ret)
-		printk(KERN_INFO "PM: Image saving done.\n");
+		pr_info("Image saving done\n");
 	swsusp_show_speed(start, stop, nr_to_write, "Wrote");
 out_clean:
 	if (crc) {
@@ -884,12 +877,12 @@ out_clean:
  *	space avaiable from the resume partition.
  */
 
-static int enough_swap(unsigned int nr_pages, unsigned int flags)
+static int enough_swap(unsigned int nr_pages)
 {
 	unsigned int free_swap = count_swap_pages(root_swap, 1);
 	unsigned int required;
 
-	pr_debug("PM: Free swap pages: %u\n", free_swap);
+	pr_debug("Free swap pages: %u\n", free_swap);
 
 	required = PAGES_FOR_IO + nr_pages;
 	return free_swap > required;
@@ -916,19 +909,19 @@ int swsusp_write(unsigned int flags)
 	pages = snapshot_get_image_size();
 	error = get_swap_writer(&handle);
 	if (error) {
-		printk(KERN_ERR "PM: Cannot get swap writer\n");
+		pr_err("Cannot get swap writer\n");
 		return error;
 	}
 	if (flags & SF_NOCOMPRESS_MODE) {
-		if (!enough_swap(pages, flags)) {
-			printk(KERN_ERR "PM: Not enough free swap\n");
+		if (!enough_swap(pages)) {
+			pr_err("Not enough free swap\n");
 			error = -ENOSPC;
 			goto out_finish;
 		}
 	}
 	memset(&snapshot, 0, sizeof(struct snapshot_handle));
 	error = snapshot_read_next(&snapshot);
-	if (error < PAGE_SIZE) {
+	if (error < (int)PAGE_SIZE) {
 		if (error >= 0)
 			error = -EFAULT;
 
@@ -981,12 +974,11 @@ static int get_swap_reader(struct swap_map_handle *handle,
 	last = handle->maps = NULL;
 	offset = swsusp_header->image;
 	while (offset) {
-		tmp = kmalloc(sizeof(*handle->maps), GFP_KERNEL);
+		tmp = kzalloc(sizeof(*handle->maps), GFP_KERNEL);
 		if (!tmp) {
 			release_swap_reader(handle);
 			return -ENOMEM;
 		}
-		memset(tmp, 0, sizeof(*tmp));
 		if (!handle->maps)
 			handle->maps = tmp;
 		if (last)
@@ -994,7 +986,7 @@ static int get_swap_reader(struct swap_map_handle *handle,
 		last = tmp;
 
 		tmp->map = (struct swap_map_page *)
-			   __get_free_page(__GFP_RECLAIM | __GFP_HIGH);
+			   __get_free_page(GFP_NOIO | __GFP_HIGH);
 		if (!tmp->map) {
 			release_swap_reader(handle);
 			return -ENOMEM;
@@ -1069,8 +1061,7 @@ static int load_image(struct swap_map_handle *handle,
 	hib_init_batch(&hb);
 
 	clean_pages_on_read = true;
-	printk(KERN_INFO "PM: Loading image data pages (%u pages)...\n",
-		nr_to_read);
+	pr_info("Loading image data pages (%u pages)...\n", nr_to_read);
 	m = nr_to_read / 10;
 	if (!m)
 		m = 1;
@@ -1088,8 +1079,8 @@ static int load_image(struct swap_map_handle *handle,
 		if (ret)
 			break;
 		if (!(nr_pages % m))
-			printk(KERN_INFO "PM: Image loading progress: %3d%%\n",
-			       nr_pages / m * 10);
+			pr_info("Image loading progress: %3d%%\n",
+				nr_pages / m * 10);
 		nr_pages++;
 	}
 	err2 = hib_wait_io(&hb);
@@ -1097,7 +1088,7 @@ static int load_image(struct swap_map_handle *handle,
 	if (!ret)
 		ret = err2;
 	if (!ret) {
-		printk(KERN_INFO "PM: Image loading done.\n");
+		pr_info("Image loading done\n");
 		snapshot_write_finalize(snapshot);
 		if (!snapshot_image_loaded(snapshot))
 			ret = -ENODATA;
@@ -1130,12 +1121,12 @@ static int lzo_decompress_threadfn(void *data)
 	struct dec_data *d = data;
 
 	while (1) {
-		wait_event(d->go, atomic_read(&d->ready) ||
+		wait_event(d->go, atomic_read_acquire(&d->ready) ||
 		                  kthread_should_stop());
 		if (kthread_should_stop()) {
 			d->thr = NULL;
 			d->ret = -1;
-			atomic_set(&d->stop, 1);
+			atomic_set_release(&d->stop, 1);
 			wake_up(&d->done);
 			break;
 		}
@@ -1148,7 +1139,7 @@ static int lzo_decompress_threadfn(void *data)
 			flush_icache_range((unsigned long)d->unc,
 					   (unsigned long)d->unc + d->unc_len);
 
-		atomic_set(&d->stop, 1);
+		atomic_set_release(&d->stop, 1);
 		wake_up(&d->done);
 	}
 	return 0;
@@ -1189,16 +1180,16 @@ static int load_image_lzo(struct swap_map_handle *handle,
 	nr_threads = num_online_cpus() - 1;
 	nr_threads = clamp_val(nr_threads, 1, LZO_THREADS);
 
-	page = vmalloc(sizeof(*page) * LZO_MAX_RD_PAGES);
+	page = vmalloc(array_size(LZO_MAX_RD_PAGES, sizeof(*page)));
 	if (!page) {
-		printk(KERN_ERR "PM: Failed to allocate LZO page\n");
+		pr_err("Failed to allocate LZO page\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
 
-	data = vmalloc(sizeof(*data) * nr_threads);
+	data = vmalloc(array_size(nr_threads, sizeof(*data)));
 	if (!data) {
-		printk(KERN_ERR "PM: Failed to allocate LZO data\n");
+		pr_err("Failed to allocate LZO data\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -1207,7 +1198,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 
 	crc = kmalloc(sizeof(*crc), GFP_KERNEL);
 	if (!crc) {
-		printk(KERN_ERR "PM: Failed to allocate crc\n");
+		pr_err("Failed to allocate crc\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -1227,8 +1218,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 		                            "image_decompress/%u", thr);
 		if (IS_ERR(data[thr].thr)) {
 			data[thr].thr = NULL;
-			printk(KERN_ERR
-			       "PM: Cannot start decompression threads\n");
+			pr_err("Cannot start decompression threads\n");
 			ret = -ENOMEM;
 			goto out_clean;
 		}
@@ -1250,7 +1240,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 	crc->thr = kthread_run(crc32_threadfn, crc, "image_crc32");
 	if (IS_ERR(crc->thr)) {
 		crc->thr = NULL;
-		printk(KERN_ERR "PM: Cannot start CRC32 thread\n");
+		pr_err("Cannot start CRC32 thread\n");
 		ret = -ENOMEM;
 		goto out_clean;
 	}
@@ -1268,15 +1258,14 @@ static int load_image_lzo(struct swap_map_handle *handle,
 
 	for (i = 0; i < read_pages; i++) {
 		page[i] = (void *)__get_free_page(i < LZO_CMP_PAGES ?
-						  __GFP_RECLAIM | __GFP_HIGH :
-						  __GFP_RECLAIM | __GFP_NOWARN |
+						  GFP_NOIO | __GFP_HIGH :
+						  GFP_NOIO | __GFP_NOWARN |
 						  __GFP_NORETRY);
 
 		if (!page[i]) {
 			if (i < LZO_CMP_PAGES) {
 				ring_size = i;
-				printk(KERN_ERR
-				       "PM: Failed to allocate LZO pages\n");
+				pr_err("Failed to allocate LZO pages\n");
 				ret = -ENOMEM;
 				goto out_clean;
 			} else {
@@ -1286,10 +1275,9 @@ static int load_image_lzo(struct swap_map_handle *handle,
 	}
 	want = ring_size = i;
 
-	printk(KERN_INFO
-		"PM: Using %u thread(s) for decompression.\n"
-		"PM: Loading and decompressing image data (%u pages)...\n",
-		nr_threads, nr_to_read);
+	pr_info("Using %u thread(s) for decompression\n", nr_threads);
+	pr_info("Loading and decompressing image data (%u pages)...\n",
+		nr_to_read);
 	m = nr_to_read / 10;
 	if (!m)
 		m = 1;
@@ -1339,7 +1327,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 		}
 
 		if (crc->run_threads) {
-			wait_event(crc->done, atomic_read(&crc->stop));
+			wait_event(crc->done, atomic_read_acquire(&crc->stop));
 			atomic_set(&crc->stop, 0);
 			crc->run_threads = 0;
 		}
@@ -1349,8 +1337,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 			if (unlikely(!data[thr].cmp_len ||
 			             data[thr].cmp_len >
 			             lzo1x_worst_compress(LZO_UNC_SIZE))) {
-				printk(KERN_ERR
-				       "PM: Invalid LZO compressed length\n");
+				pr_err("Invalid LZO compressed length\n");
 				ret = -1;
 				goto out_finish;
 			}
@@ -1376,7 +1363,7 @@ static int load_image_lzo(struct swap_map_handle *handle,
 					pg = 0;
 			}
 
-			atomic_set(&data[thr].ready, 1);
+			atomic_set_release(&data[thr].ready, 1);
 			wake_up(&data[thr].go);
 		}
 
@@ -1395,22 +1382,20 @@ static int load_image_lzo(struct swap_map_handle *handle,
 
 		for (run_threads = thr, thr = 0; thr < run_threads; thr++) {
 			wait_event(data[thr].done,
-			           atomic_read(&data[thr].stop));
+				atomic_read_acquire(&data[thr].stop));
 			atomic_set(&data[thr].stop, 0);
 
 			ret = data[thr].ret;
 
 			if (ret < 0) {
-				printk(KERN_ERR
-				       "PM: LZO decompression failed\n");
+				pr_err("LZO decompression failed\n");
 				goto out_finish;
 			}
 
 			if (unlikely(!data[thr].unc_len ||
 			             data[thr].unc_len > LZO_UNC_SIZE ||
 			             data[thr].unc_len & (PAGE_SIZE - 1))) {
-				printk(KERN_ERR
-				       "PM: Invalid LZO uncompressed length\n");
+				pr_err("Invalid LZO uncompressed length\n");
 				ret = -1;
 				goto out_finish;
 			}
@@ -1421,16 +1406,14 @@ static int load_image_lzo(struct swap_map_handle *handle,
 				       data[thr].unc + off, PAGE_SIZE);
 
 				if (!(nr_pages % m))
-					printk(KERN_INFO
-					       "PM: Image loading progress: "
-					       "%3d%%\n",
-					       nr_pages / m * 10);
+					pr_info("Image loading progress: %3d%%\n",
+						nr_pages / m * 10);
 				nr_pages++;
 
 				ret = snapshot_write_next(snapshot);
 				if (ret <= 0) {
 					crc->run_threads = thr + 1;
-					atomic_set(&crc->ready, 1);
+					atomic_set_release(&crc->ready, 1);
 					wake_up(&crc->go);
 					goto out_finish;
 				}
@@ -1438,27 +1421,25 @@ static int load_image_lzo(struct swap_map_handle *handle,
 		}
 
 		crc->run_threads = thr;
-		atomic_set(&crc->ready, 1);
+		atomic_set_release(&crc->ready, 1);
 		wake_up(&crc->go);
 	}
 
 out_finish:
 	if (crc->run_threads) {
-		wait_event(crc->done, atomic_read(&crc->stop));
+		wait_event(crc->done, atomic_read_acquire(&crc->stop));
 		atomic_set(&crc->stop, 0);
 	}
 	stop = ktime_get();
 	if (!ret) {
-		printk(KERN_INFO "PM: Image loading done.\n");
+		pr_info("Image loading done\n");
 		snapshot_write_finalize(snapshot);
 		if (!snapshot_image_loaded(snapshot))
 			ret = -ENODATA;
 		if (!ret) {
-			if ((swsusp_header->flags & SF_CRC32_MODE) &&
-			    (!IS_ENABLED(CONFIG_HIBERNATION_SKIP_CRC))) {
+			if (swsusp_header->flags & SF_CRC32_MODE) {
 				if(handle->crc32 != swsusp_header->crc32) {
-					printk(KERN_ERR
-					       "PM: Invalid image CRC32!\n");
+					pr_err("Invalid image CRC32!\n");
 					ret = -ENODATA;
 				}
 			}
@@ -1499,7 +1480,7 @@ int swsusp_read(unsigned int *flags_p)
 
 	memset(&snapshot, 0, sizeof(struct snapshot_handle));
 	error = snapshot_write_next(&snapshot);
-	if (error < PAGE_SIZE)
+	if (error < (int)PAGE_SIZE)
 		return error < 0 ? error : -EFAULT;
 	header = (struct swsusp_info *)data_of(snapshot);
 	error = get_swap_reader(&handle, flags_p);
@@ -1515,9 +1496,9 @@ int swsusp_read(unsigned int *flags_p)
 	swap_reader_finish(&handle);
 end:
 	if (!error)
-		pr_debug("PM: Image successfully loaded\n");
+		pr_debug("Image successfully loaded\n");
 	else
-		pr_debug("PM: Error %d resuming\n", error);
+		pr_debug("Error %d resuming\n", error);
 	return error;
 }
 
@@ -1543,12 +1524,10 @@ int swsusp_check(void)
 
 		if (!memcmp(HIBERNATE_SIG, swsusp_header->sig, 10)) {
 			memcpy(swsusp_header->sig, swsusp_header->orig_sig, 10);
-#ifndef CONFIG_HIBERNATION_IMAGE_REUSE
 			/* Reset swap signature now */
 			error = hib_submit_io(REQ_OP_WRITE, REQ_SYNC,
 						swsusp_resume_block,
 						swsusp_header, NULL);
-#endif
 		} else {
 			error = -EINVAL;
 		}
@@ -1557,13 +1536,13 @@ put:
 		if (error)
 			blkdev_put(hib_resume_bdev, FMODE_READ | FMODE_EXCL);
 		else
-			pr_debug("PM: Image signature found, resuming\n");
+			pr_debug("Image signature found, resuming\n");
 	} else {
 		error = PTR_ERR(hib_resume_bdev);
 	}
 
 	if (error)
-		pr_debug("PM: Image not found (code %d)\n", error);
+		pr_debug("Image not found (code %d)\n", error);
 
 	return error;
 }
@@ -1575,7 +1554,7 @@ put:
 void swsusp_close(fmode_t mode)
 {
 	if (IS_ERR(hib_resume_bdev)) {
-		pr_debug("PM: Image device not initialised\n");
+		pr_debug("Image device not initialised\n");
 		return;
 	}
 
@@ -1599,7 +1578,7 @@ int swsusp_unmark(void)
 					swsusp_resume_block,
 					swsusp_header, NULL);
 	} else {
-		printk(KERN_ERR "PM: Cannot find swsusp signature!\n");
+		pr_err("Cannot find swsusp signature!\n");
 		error = -ENODEV;
 	}
 

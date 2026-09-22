@@ -13,6 +13,7 @@
 #include <asm/simd.h>
 #include <asm/unaligned.h>
 #include <crypto/internal/hash.h>
+#include <crypto/internal/simd.h>
 #include <crypto/sha.h>
 #include <crypto/sha512_base.h>
 #include <linux/cpufeature.h>
@@ -22,6 +23,8 @@
 MODULE_DESCRIPTION("SHA-384/SHA-512 secure hash using ARMv8 Crypto Extensions");
 MODULE_AUTHOR("Ard Biesheuvel <ard.biesheuvel@linaro.org>");
 MODULE_LICENSE("GPL v2");
+MODULE_ALIAS_CRYPTO("sha384");
+MODULE_ALIAS_CRYPTO("sha512");
 
 asmlinkage void sha512_ce_transform(struct sha512_state *sst, u8 const *src,
 				    int blocks);
@@ -31,7 +34,7 @@ asmlinkage void sha512_block_data_order(u64 *digest, u8 const *src, int blocks);
 static int sha512_ce_update(struct shash_desc *desc, const u8 *data,
 			    unsigned int len)
 {
-	if (!may_use_simd())
+	if (!crypto_simd_usable())
 		return sha512_base_do_update(desc, data, len,
 				(sha512_block_fn *)sha512_block_data_order);
 
@@ -46,7 +49,7 @@ static int sha512_ce_update(struct shash_desc *desc, const u8 *data,
 static int sha512_ce_finup(struct shash_desc *desc, const u8 *data,
 			   unsigned int len, u8 *out)
 {
-	if (!may_use_simd()) {
+	if (!crypto_simd_usable()) {
 		if (len)
 			sha512_base_do_update(desc, data, len,
 				(sha512_block_fn *)sha512_block_data_order);
@@ -65,7 +68,7 @@ static int sha512_ce_finup(struct shash_desc *desc, const u8 *data,
 
 static int sha512_ce_final(struct shash_desc *desc, u8 *out)
 {
-	if (!may_use_simd()) {
+	if (!crypto_simd_usable()) {
 		sha512_base_do_finalize(desc,
 				(sha512_block_fn *)sha512_block_data_order);
 		return sha512_base_finish(desc, out);
@@ -87,7 +90,6 @@ static struct shash_alg algs[] = { {
 	.base.cra_name		= "sha384",
 	.base.cra_driver_name	= "sha384-ce",
 	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_TYPE_SHASH,
 	.base.cra_blocksize	= SHA512_BLOCK_SIZE,
 	.base.cra_module	= THIS_MODULE,
 }, {
@@ -100,7 +102,6 @@ static struct shash_alg algs[] = { {
 	.base.cra_name		= "sha512",
 	.base.cra_driver_name	= "sha512-ce",
 	.base.cra_priority	= 200,
-	.base.cra_flags		= CRYPTO_ALG_TYPE_SHASH,
 	.base.cra_blocksize	= SHA512_BLOCK_SIZE,
 	.base.cra_module	= THIS_MODULE,
 } };

@@ -1,10 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2004 Paul Mackerras <paulus@au.ibm.com>, IBM
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 struct pt_regs;
@@ -97,6 +93,8 @@ enum instruction_type {
 #define SIZE(n)		((n) << 12)
 #define GETSIZE(w)	((w) >> 12)
 
+#define GETTYPE(t)	((t) & INSTR_TYPE_MASK)
+
 #define MKOP(t, f, s)	((t) | (f) | SIZE(s))
 
 struct instruction_op {
@@ -162,9 +160,4 @@ extern int emulate_step(struct pt_regs *regs, unsigned int instr);
  */
 extern int emulate_loadstore(struct pt_regs *regs, struct instruction_op *op);
 
-extern void emulate_vsx_load(struct instruction_op *op, union vsx_reg *reg,
-			     const void *mem, bool cross_endian);
-extern void emulate_vsx_store(struct instruction_op *op,
-			      const union vsx_reg *reg, void *mem,
-			      bool cross_endian);
 extern int emulate_dcbz(unsigned long ea, struct pt_regs *regs);

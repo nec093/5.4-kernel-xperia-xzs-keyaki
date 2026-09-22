@@ -11,6 +11,7 @@
 #include <linux/crc32.h>
 #include <linux/sunrpc/svc.h>
 #include <uapi/linux/nfsd/nfsfh.h>
+#include <linux/iversion.h>
 
 static inline __u32 ino_t_to_u32(ino_t ino)
 {
@@ -207,7 +208,6 @@ static inline bool fh_fsid_match(struct knfsd_fh *fh1, struct knfsd_fh *fh2)
 	return true;
 }
 
-#ifdef CONFIG_CRC32
 /**
  * knfsd_fh_hash - calculate the crc32 hash for the filehandle
  * @fh - pointer to filehandle
@@ -215,19 +215,10 @@ static inline bool fh_fsid_match(struct knfsd_fh *fh1, struct knfsd_fh *fh2)
  * returns a crc32 hash for the filehandle that is compatible with
  * the one displayed by "wireshark".
  */
-
-static inline u32
-knfsd_fh_hash(struct knfsd_fh *fh)
+static inline u32 knfsd_fh_hash(const struct knfsd_fh *fh)
 {
 	return ~crc32_le(0xFFFFFFFF, (unsigned char *)&fh->fh_base, fh->fh_size);
 }
-#else
-static inline u32
-knfsd_fh_hash(struct knfsd_fh *fh)
-{
-	return 0;
-}
-#endif
 
 #ifdef CONFIG_NFSD_V3
 /*
@@ -252,36 +243,20 @@ fh_clear_wcc(struct svc_fh *fhp)
  * By using both ctime and the i_version counter we guarantee that as
  * long as time doesn't go backwards we never reuse an old value.
  */
-static inline u64 nfsd4_change_attribute(struct inode *inode)
+static inline u64 nfsd4_change_attribute(struct kstat *stat,
+					 struct inode *inode)
 {
 	u64 chattr;
 
-	chattr =  inode->i_ctime.tv_sec;
+	chattr =  stat->ctime.tv_sec;
 	chattr <<= 30;
-	chattr += inode->i_ctime.tv_nsec;
-	chattr += inode->i_version;
+	chattr += stat->ctime.tv_nsec;
+	chattr += inode_query_iversion(inode);
 	return chattr;
 }
 
-/*
- * Fill in the pre_op attr for the wcc data
- */
-static inline void
-fill_pre_wcc(struct svc_fh *fhp)
-{
-	struct inode    *inode;
-
-	inode = d_inode(fhp->fh_dentry);
-	if (!fhp->fh_pre_saved) {
-		fhp->fh_pre_mtime = inode->i_mtime;
-		fhp->fh_pre_ctime = inode->i_ctime;
-		fhp->fh_pre_size  = inode->i_size;
-		fhp->fh_pre_change = nfsd4_change_attribute(inode);
-		fhp->fh_pre_saved = true;
-	}
-}
-
-extern void fill_post_wcc(struct svc_fh *);
+extern void fill_pre_wcc(struct svc_fh *fhp);
+extern void fill_post_wcc(struct svc_fh *fhp);
 #else
 #define fh_clear_wcc(ignored)
 #define fill_pre_wcc(ignored)

@@ -1,14 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * consumer.h -- SoC Regulator consumer support.
  *
  * Copyright (C) 2007, 2008 Wolfson Microelectronics PLC.
- * Copyright (C) 2013 Sony Mobile Communications AB.
  *
  * Author: Liam Girdwood <lrg@slimlogic.co.uk>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Regulator Consumer Interface.
  *
@@ -30,7 +26,6 @@
  *   but this drops rapidly to 60% when below 100mA. Regulator r has > 90%
  *   efficiency in IDLE mode at loads < 10mA. Thus regulator r will operate
  *   in normal mode for loads > 10mA and in IDLE mode for load <= 10mA.
- *
  */
 
 #ifndef __LINUX_REGULATOR_CONSUMER_H_
@@ -105,7 +100,6 @@ struct regmap;
  *                      Data passed is old voltage cast to (void *).
  * PRE_DISABLE    Regulator is about to be disabled
  * ABORT_DISABLE  Regulator disable failed for some reason
- * ENABLE         Regulator was enabled.
  *
  * NOTE: These events can be OR'ed together when passed into handler.
  */
@@ -178,18 +172,6 @@ struct regulator_bulk_data {
 	int ret;
 };
 
-/**
- * struct regulator_ocp_notification: event notification structure
- * @notify: pointer to client function to call when ocp event is detected.
- *          notify function runs in interrupt context.
- * @ctxt: client-specific context pointer
- *
- */
-struct regulator_ocp_notification {
-	void (*notify)(void *);
-	void *ctxt;
-};
-
 #if defined(CONFIG_REGULATOR)
 
 /* regulator get and put */
@@ -258,7 +240,6 @@ void regulator_bulk_free(int num_consumers,
 
 int regulator_count_voltages(struct regulator *regulator);
 int regulator_list_voltage(struct regulator *regulator, unsigned selector);
-int regulator_list_corner_voltage(struct regulator *regulator, int corner);
 int regulator_is_supported_voltage(struct regulator *regulator,
 				   int min_uV, int max_uV);
 unsigned int regulator_get_linear_step(struct regulator *regulator);
@@ -286,10 +267,6 @@ int regulator_get_hardware_vsel_register(struct regulator *regulator,
 int regulator_list_hardware_vsel(struct regulator *regulator,
 				 unsigned selector);
 
-/* regulator register ocp notification */
-int regulator_register_ocp_notification(struct regulator *regulator,
-			struct regulator_ocp_notification *ocp_notification);
-
 /* regulator notifier block */
 int regulator_register_notifier(struct regulator *regulator,
 			      struct notifier_block *nb);
@@ -303,6 +280,14 @@ void devm_regulator_unregister_notifier(struct regulator *regulator,
 /* driver data - core doesn't touch */
 void *regulator_get_drvdata(struct regulator *regulator);
 void regulator_set_drvdata(struct regulator *regulator, void *data);
+
+/* misc helpers */
+
+void regulator_bulk_set_supply_names(struct regulator_bulk_data *consumers,
+				     const char *const *supply_names,
+				     unsigned int num_supplies);
+
+bool regulator_is_equal(struct regulator *reg1, struct regulator *reg2);
 
 #else
 
@@ -497,6 +482,11 @@ static inline int regulator_is_supported_voltage(struct regulator *regulator,
 	return 0;
 }
 
+static inline unsigned int regulator_get_linear_step(struct regulator *regulator)
+{
+	return 0;
+}
+
 static inline int regulator_set_current_limit(struct regulator *regulator,
 					     int min_uA, int max_uA)
 {
@@ -554,13 +544,6 @@ static inline int regulator_list_hardware_vsel(struct regulator *regulator,
 	return -EOPNOTSUPP;
 }
 
-static inline int regulator_register_ocp_notification(
-			struct regulator *regulator,
-			struct regulator_ocp_notification *ocp_notification);
-{
-	return 0;
-}
-
 static inline int regulator_register_notifier(struct regulator *regulator,
 			      struct notifier_block *nb)
 {
@@ -605,10 +588,17 @@ static inline int regulator_list_voltage(struct regulator *regulator, unsigned s
 	return -EINVAL;
 }
 
-static inline int regulator_list_corner_voltage(struct regulator *regulator,
-	int corner)
+static inline void
+regulator_bulk_set_supply_names(struct regulator_bulk_data *consumers,
+				const char *const *supply_names,
+				unsigned int num_supplies)
 {
-	return -EINVAL;
+}
+
+static inline bool
+regulator_is_equal(struct regulator *reg1, struct regulator *reg2)
+{
+	return false;
 }
 #endif
 

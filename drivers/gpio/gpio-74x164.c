@@ -1,22 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  74Hx164 - Generic serial-in/parallel-out 8-bits shift register GPIO driver
  *
  *  Copyright (C) 2010 Gabor Juhos <juhosg@openwrt.org>
  *  Copyright (C) 2010 Miguel Gaio <miguel.gaio@efixo.com>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  published by the Free Software Foundation.
  */
 
 #include <linux/gpio/consumer.h>
-#include <linux/init.h>
-#include <linux/mutex.h>
-#include <linux/spi/spi.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
-#include <linux/slab.h>
+#include <linux/gpio/driver.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/property.h>
+#include <linux/slab.h>
+#include <linux/spi/spi.h>
 
 #define GEN_74X164_NUMBER_GPIOS	8
 
@@ -117,10 +113,9 @@ static int gen_74x164_probe(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	if (of_property_read_u32(spi->dev.of_node, "registers-number",
-				 &nregs)) {
-		dev_err(&spi->dev,
-			"Missing registers-number property in the DT.\n");
+	ret = device_property_read_u32(&spi->dev, "registers-number", &nregs);
+	if (ret) {
+		dev_err(&spi->dev, "Missing 'registers-number' property.\n");
 		return -EINVAL;
 	}
 
@@ -132,8 +127,6 @@ static int gen_74x164_probe(struct spi_device *spi)
 						 GPIOD_OUT_LOW);
 	if (IS_ERR(chip->gpiod_oe))
 		return PTR_ERR(chip->gpiod_oe);
-
-	gpiod_set_value_cansleep(chip->gpiod_oe, 1);
 
 	spi_set_drvdata(spi, chip);
 
@@ -158,6 +151,8 @@ static int gen_74x164_probe(struct spi_device *spi)
 		dev_err(&spi->dev, "Failed writing: %d\n", ret);
 		goto exit_destroy;
 	}
+
+	gpiod_set_value_cansleep(chip->gpiod_oe, 1);
 
 	ret = gpiochip_add_data(&chip->gpio_chip, chip);
 	if (!ret)

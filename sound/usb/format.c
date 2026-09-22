@@ -1,18 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 #include <linux/init.h>
@@ -40,11 +27,11 @@
  * @dev: usb device
  * @fp: audioformat record
  * @format: the format tag (wFormatTag)
- * @fmt: the format type descriptor
+ * @fmt: the format type descriptor (v1/v2) or AudioStreaming descriptor (v3)
  */
 static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 				     struct audioformat *fp,
-				     unsigned int format, void *_fmt)
+				     u64 format, void *_fmt)
 {
 	int sample_width, sample_bytes;
 	u64 pcm_formats = 0;
@@ -55,13 +42,13 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 		struct uac_format_type_i_discrete_descriptor *fmt = _fmt;
 		if (format >= 64) {
 			usb_audio_info(chip,
-				       "%u:%d: invalid format type %#x is detected, processed as PCM\n",
+				       "%u:%d: invalid format type 0x%llx is detected, processed as PCM\n",
 				       fp->iface, fp->altsetting, format);
 			format = UAC_FORMAT_TYPE_I_PCM;
 		}
 		sample_width = fmt->bBitResolution;
 		sample_bytes = fmt->bSubframeSize;
-		format = 1 << format;
+		format = 1ULL << format;
 		break;
 	}
 
@@ -70,41 +57,35 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 		sample_width = fmt->bBitResolution;
 		sample_bytes = fmt->bSubslotSize;
 
-		if (format & UAC2_FORMAT_TYPE_I_RAW_DATA)
+		if (format & UAC2_FORMAT_TYPE_I_RAW_DATA) {
 			pcm_formats |= SNDRV_PCM_FMTBIT_SPECIAL;
+			/* flag potentially raw DSD capable altsettings */
+			fp->dsd_raw = true;
+			/* clear special format bit to avoid "unsupported format" msg below */
+			format &= ~UAC2_FORMAT_TYPE_I_RAW_DATA;
+		}
 
 		format <<= 1;
 		break;
 	}
-
 	case UAC_VERSION_3: {
-		switch (fp->maxpacksize) {
-		case BADD_MAXPSIZE_SYNC_MONO_16:
-		case BADD_MAXPSIZE_SYNC_STEREO_16:
-		case BADD_MAXPSIZE_ASYNC_MONO_16:
-		case BADD_MAXPSIZE_ASYNC_STEREO_16: {
-			sample_width = BIT_RES_16_BIT;
-			sample_bytes = SUBSLOTSIZE_16_BIT;
-			break;
+		struct uac3_as_header_descriptor *as = _fmt;
+
+		sample_width = as->bBitResolution;
+		sample_bytes = as->bSubslotSize;
+
+		if (format & UAC3_FORMAT_TYPE_I_RAW_DATA) {
+			pcm_formats |= SNDRV_PCM_FMTBIT_SPECIAL;
+			/* clear special format bit to avoid "unsupported format" msg below */
+			format &= ~UAC3_FORMAT_TYPE_I_RAW_DATA;
 		}
 
-		case BADD_MAXPSIZE_SYNC_MONO_24:
-		case BADD_MAXPSIZE_SYNC_STEREO_24:
-		case BADD_MAXPSIZE_ASYNC_MONO_24:
-		case BADD_MAXPSIZE_ASYNC_STEREO_24: {
-			sample_width = BIT_RES_24_BIT;
-			sample_bytes = SUBSLOTSIZE_24_BIT;
-			break;
-		}
-		default:
-			usb_audio_err(chip, "%u:%d : Invalid wMaxPacketSize\n",
-				fp->iface, fp->altsetting);
-			return pcm_formats;
-		}
-		format = 1 << format;
+		format <<= 1;
 		break;
 	}
 	}
+
+	fp->fmt_bits = sample_width;
 
 	if ((pcm_formats == 0) &&
 	    (format == 0 || format == (1 << UAC_FORMAT_TYPE_I_UNDEFINED))) {
@@ -172,7 +153,7 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 	}
 	if (format & ~0x3f) {
 		usb_audio_info(chip,
-			 "%u:%d : unsupported format bits %#x\n",
+			 "%u:%d : unsupported format bits %#llx\n",
 			 fp->iface, fp->altsetting, format);
 	}
 
@@ -210,7 +191,8 @@ static int parse_audio_format_rates_v1(struct snd_usb_audio *chip, struct audiof
 		 */
 		int r, idx;
 
-		fp->rate_table = kmalloc(sizeof(int) * nr_rates, GFP_KERNEL);
+		fp->rate_table = kmalloc_array(nr_rates, sizeof(int),
+					       GFP_KERNEL);
 		if (fp->rate_table == NULL)
 			return -ENOMEM;
 
@@ -368,17 +350,47 @@ skip_rate:
 	return nr_rates;
 }
 
+/* Line6 Helix series don't support the UAC2_CS_RANGE usb function
+ * call. Return a static table of known clock rates.
+ */
+static int line6_parse_audio_format_rates_quirk(struct snd_usb_audio *chip,
+						struct audioformat *fp)
+{
+	switch (chip->usb_id) {
+	case USB_ID(0x0E41, 0x4241): /* Line6 Helix */
+	case USB_ID(0x0E41, 0x4242): /* Line6 Helix Rack */
+	case USB_ID(0x0E41, 0x4244): /* Line6 Helix LT */
+	case USB_ID(0x0E41, 0x4246): /* Line6 HX-Stomp */
+	case USB_ID(0x0E41, 0x4248): /* Line6 Helix >= fw 2.82 */
+	case USB_ID(0x0E41, 0x4249): /* Line6 Helix Rack >= fw 2.82 */
+	case USB_ID(0x0E41, 0x424a): /* Line6 Helix LT >= fw 2.82 */
+		/* supported rates: 48Khz */
+		kfree(fp->rate_table);
+		fp->rate_table = kmalloc(sizeof(int), GFP_KERNEL);
+		if (!fp->rate_table)
+			return -ENOMEM;
+		fp->nr_rates = 1;
+		fp->rate_min = 48000;
+		fp->rate_max = 48000;
+		fp->rates = SNDRV_PCM_RATE_48000;
+		fp->rate_table[0] = 48000;
+		return 0;
+	}
+
+	return -ENODEV;
+}
+
 /*
  * parse the format descriptor and stores the possible sample rates
- * on the audioformat table (audio class v2).
+ * on the audioformat table (audio class v2 and v3).
  */
-static int parse_audio_format_rates_v2(struct snd_usb_audio *chip,
+static int parse_audio_format_rates_v2v3(struct snd_usb_audio *chip,
 				       struct audioformat *fp)
 {
 	struct usb_device *dev = chip->dev;
 	unsigned char tmp[2], *data;
-	int nr_triplets, data_size, ret = 0;
-	int clock = snd_usb_clock_find_source(chip, fp->clock, false);
+	int nr_triplets, data_size, ret = 0, ret_l6;
+	int clock = snd_usb_clock_find_source(chip, fp, false);
 
 	if (clock < 0) {
 		dev_err(&dev->dev,
@@ -395,9 +407,22 @@ static int parse_audio_format_rates_v2(struct snd_usb_audio *chip,
 			      tmp, sizeof(tmp));
 
 	if (ret < 0) {
-		dev_err(&dev->dev,
-			"%s(): unable to retrieve number of sample rates (clock %d)\n",
+		/* line6 helix devices don't support UAC2_CS_CONTROL_SAM_FREQ call */
+		ret_l6 = line6_parse_audio_format_rates_quirk(chip, fp);
+		if (ret_l6 == -ENODEV) {
+			/* no line6 device found continue showing the error */
+			dev_err(&dev->dev,
+				"%s(): unable to retrieve number of sample rates (clock %d)\n",
 				__func__, clock);
+			goto err;
+		}
+		if (ret_l6 == 0) {
+			dev_info(&dev->dev,
+				"%s(): unable to retrieve number of sample rates: set it to a predefined value (clock %d).\n",
+				__func__, clock);
+			return 0;
+		}
+		ret = ret_l6;
 		goto err;
 	}
 
@@ -437,7 +462,7 @@ static int parse_audio_format_rates_v2(struct snd_usb_audio *chip,
 		goto err_free;
 	}
 
-	fp->rate_table = kmalloc(sizeof(int) * fp->nr_rates, GFP_KERNEL);
+	fp->rate_table = kmalloc_array(fp->nr_rates, sizeof(int), GFP_KERNEL);
 	if (!fp->rate_table) {
 		ret = -ENOMEM;
 		goto err_free;
@@ -453,34 +478,34 @@ err:
 	return ret;
 }
 
-static int badd_set_audio_rate_v3(struct snd_usb_audio *chip,
-		   struct audioformat *fp)
-{
-	unsigned int rate;
-
-	fp->rate_table = kmalloc(sizeof(int), GFP_KERNEL);
-	if (fp->rate_table == NULL)
-		return -ENOMEM;
-
-	fp->nr_rates = 1;
-	rate = BADD_SAMPLING_RATE;
-	fp->rate_min = fp->rate_max = fp->rate_table[0] = rate;
-	fp->rates |= snd_pcm_rate_to_rate_bit(rate);
-	return 0;
-}
-
 /*
  * parse the format type I and III descriptors
  */
 static int parse_audio_format_i(struct snd_usb_audio *chip,
-				struct audioformat *fp, unsigned int format,
-				u8 format_type,
-				struct uac_format_type_i_continuous_descriptor *fmt)
+				struct audioformat *fp, u64 format,
+				void *_fmt)
 {
 	snd_pcm_format_t pcm_format;
+	unsigned int fmt_type;
 	int ret;
 
-	if (format_type == UAC_FORMAT_TYPE_III) {
+	switch (fp->protocol) {
+	default:
+	case UAC_VERSION_1:
+	case UAC_VERSION_2: {
+		struct uac_format_type_i_continuous_descriptor *fmt = _fmt;
+
+		fmt_type = fmt->bFormatType;
+		break;
+	}
+	case UAC_VERSION_3: {
+		/* fp->fmt_type is already set in this case */
+		fmt_type = fp->fmt_type;
+		break;
+	}
+	}
+
+	if (fmt_type == UAC_FORMAT_TYPE_III) {
 		/* FIXME: the format type is really IECxxx
 		 *        but we give normal PCM format to get the existing
 		 *        apps working...
@@ -499,7 +524,7 @@ static int parse_audio_format_i(struct snd_usb_audio *chip,
 		}
 		fp->formats = pcm_format_to_bits(pcm_format);
 	} else {
-		fp->formats = parse_audio_format_i_type(chip, fp, format, fmt);
+		fp->formats = parse_audio_format_i_type(chip, fp, format, _fmt);
 		if (!fp->formats)
 			return -EINVAL;
 	}
@@ -511,17 +536,19 @@ static int parse_audio_format_i(struct snd_usb_audio *chip,
 	 */
 	switch (fp->protocol) {
 	default:
-	case UAC_VERSION_1:
+	case UAC_VERSION_1: {
+		struct uac_format_type_i_continuous_descriptor *fmt = _fmt;
+
 		fp->channels = fmt->bNrChannels;
 		ret = parse_audio_format_rates_v1(chip, fp, (unsigned char *) fmt, 7);
 		break;
+	}
 	case UAC_VERSION_2:
+	case UAC_VERSION_3: {
 		/* fp->channels is already set in this case */
-		ret = parse_audio_format_rates_v2(chip, fp);
+		ret = parse_audio_format_rates_v2v3(chip, fp);
 		break;
-	case UAC_VERSION_3:
-		ret = badd_set_audio_rate_v3(chip, fp);
-		break;
+	}
 	}
 
 	if (fp->channels < 1) {
@@ -539,7 +566,7 @@ static int parse_audio_format_i(struct snd_usb_audio *chip,
  */
 static int parse_audio_format_ii(struct snd_usb_audio *chip,
 				 struct audioformat *fp,
-				 int format, void *_fmt)
+				 u64 format, void *_fmt)
 {
 	int brate, framesize, ret;
 
@@ -554,7 +581,7 @@ static int parse_audio_format_ii(struct snd_usb_audio *chip,
 		break;
 	default:
 		usb_audio_info(chip,
-			 "%u:%d : unknown format tag %#x is detected.  processed as MPEG.\n",
+			 "%u:%d : unknown format tag %#llx is detected.  processed as MPEG.\n",
 			 fp->iface, fp->altsetting, format);
 		fp->formats = SNDRV_PCM_FMTBIT_MPEG;
 		break;
@@ -579,7 +606,7 @@ static int parse_audio_format_ii(struct snd_usb_audio *chip,
 		framesize = le16_to_cpu(fmt->wSamplesPerFrame);
 		usb_audio_info(chip, "found format II with max.bitrate = %d, frame size=%d\n", brate, framesize);
 		fp->frame_size = framesize;
-		ret = parse_audio_format_rates_v2(chip, fp);
+		ret = parse_audio_format_rates_v2v3(chip, fp);
 		break;
 	}
 	}
@@ -588,23 +615,16 @@ static int parse_audio_format_ii(struct snd_usb_audio *chip,
 }
 
 int snd_usb_parse_audio_format(struct snd_usb_audio *chip,
-			       struct audioformat *fp, unsigned int format,
+			       struct audioformat *fp, u64 format,
 			       struct uac_format_type_i_continuous_descriptor *fmt,
 			       int stream)
 {
 	int err;
-	int format_type = -EINVAL;
 
-	if ((fp->protocol == UAC_VERSION_1) ||
-			(fp->protocol == UAC_VERSION_2))
-		format_type = fmt->bFormatType;
-	else
-		format_type = UAC_FORMAT_TYPE_I; /* only BADD is supported */
-
-	switch (format_type) {
+	switch (fmt->bFormatType) {
 	case UAC_FORMAT_TYPE_I:
 	case UAC_FORMAT_TYPE_III:
-		err = parse_audio_format_i(chip, fp, format, format_type, fmt);
+		err = parse_audio_format_i(chip, fp, format, fmt);
 		break;
 	case UAC_FORMAT_TYPE_II:
 		err = parse_audio_format_ii(chip, fp, format, fmt);
@@ -613,10 +633,10 @@ int snd_usb_parse_audio_format(struct snd_usb_audio *chip,
 		usb_audio_info(chip,
 			 "%u:%d : format type %d is not supported yet\n",
 			 fp->iface, fp->altsetting,
-			 format_type);
+			 fmt->bFormatType);
 		return -ENOTSUPP;
 	}
-	fp->fmt_type = format_type;
+	fp->fmt_type = fmt->bFormatType;
 	if (err < 0)
 		return err;
 #if 1
@@ -627,7 +647,7 @@ int snd_usb_parse_audio_format(struct snd_usb_audio *chip,
 	if (chip->usb_id == USB_ID(0x041e, 0x3000) ||
 	    chip->usb_id == USB_ID(0x041e, 0x3020) ||
 	    chip->usb_id == USB_ID(0x041e, 0x3061)) {
-		if (format_type == UAC_FORMAT_TYPE_I &&
+		if (fmt->bFormatType == UAC_FORMAT_TYPE_I &&
 		    fp->rates != SNDRV_PCM_RATE_48000 &&
 		    fp->rates != SNDRV_PCM_RATE_96000)
 			return -ENOTSUPP;
@@ -636,3 +656,26 @@ int snd_usb_parse_audio_format(struct snd_usb_audio *chip,
 	return 0;
 }
 
+int snd_usb_parse_audio_format_v3(struct snd_usb_audio *chip,
+			       struct audioformat *fp,
+			       struct uac3_as_header_descriptor *as,
+			       int stream)
+{
+	u64 format = le64_to_cpu(as->bmFormats);
+	int err;
+
+	/*
+	 * Type I format bits are D0..D6
+	 * This test works because type IV is not supported
+	 */
+	if (format & 0x7f)
+		fp->fmt_type = UAC_FORMAT_TYPE_I;
+	else
+		fp->fmt_type = UAC_FORMAT_TYPE_III;
+
+	err = parse_audio_format_i(chip, fp, format, as);
+	if (err < 0)
+		return err;
+
+	return 0;
+}

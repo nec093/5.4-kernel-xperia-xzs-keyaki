@@ -1,20 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2001-2004 by David Brownell
  * Copyright (c) 2003 Michal Sojka, for high-speed iso transfers
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /* this file is part of ehci-hcd.c */
@@ -130,8 +117,9 @@ static struct ehci_tt *find_tt(struct usb_device *udev)
 	if (utt->multi) {
 		tt_index = utt->hcpriv;
 		if (!tt_index) {		/* Create the index array */
-			tt_index = kzalloc(utt->hub->maxchild *
-					sizeof(*tt_index), GFP_ATOMIC);
+			tt_index = kcalloc(utt->hub->maxchild,
+					   sizeof(*tt_index),
+					   GFP_ATOMIC);
 			if (!tt_index)
 				return ERR_PTR(-ENOMEM);
 			utt->hcpriv = tt_index;
@@ -549,7 +537,7 @@ static void qh_link_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 	unsigned	period = qh->ps.period;
 
 	dev_dbg(&qh->ps.udev->dev,
-		"link qh%d-%04x/%pK start %d [%d/%d us]\n",
+		"link qh%d-%04x/%p start %d [%d/%d us]\n",
 		period, hc32_to_cpup(ehci, &qh->hw->hw_info2)
 			& (QH_CMASK | QH_SMASK),
 		qh, qh->ps.phase, qh->ps.usecs, qh->ps.c_usecs);
@@ -642,7 +630,7 @@ static void qh_unlink_periodic(struct ehci_hcd *ehci, struct ehci_qh *qh)
 		: (qh->ps.usecs * 8);
 
 	dev_dbg(&qh->ps.udev->dev,
-		"unlink qh%d-%04x/%pK start %d [%d/%d us]\n",
+		"unlink qh%d-%04x/%p start %d [%d/%d us]\n",
 		qh->ps.period,
 		hc32_to_cpup(ehci, &qh->hw->hw_info2) & (QH_CMASK | QH_SMASK),
 		qh, qh->ps.phase, qh->ps.usecs, qh->ps.c_usecs);
@@ -752,7 +740,7 @@ static void end_unlink_intr(struct ehci_hcd *ehci, struct ehci_qh *qh)
 		 * FIXME kill the now-dysfunctional queued urbs
 		 */
 		else {
-			ehci_err(ehci, "can't reschedule qh %pK, err %d\n",
+			ehci_err(ehci, "can't reschedule qh %p, err %d\n",
 					qh, rc);
 		}
 	}
@@ -870,7 +858,7 @@ static int qh_schedule(struct ehci_hcd *ehci, struct ehci_qh *qh)
 
 	/* reuse the previous schedule slots, if we can */
 	if (qh->ps.phase != NO_FRAME) {
-		ehci_dbg(ehci, "reused qh %pK schedule\n", qh);
+		ehci_dbg(ehci, "reused qh %p schedule\n", qh);
 		return 0;
 	}
 
@@ -1064,11 +1052,10 @@ iso_stream_init(
 
 	/* knows about ITD vs SITD */
 	if (dev->speed == USB_SPEED_HIGH) {
-		unsigned multi = hb_mult(maxp);
+		unsigned multi = usb_endpoint_maxp_mult(&urb->ep->desc);
 
 		stream->highspeed = 1;
 
-		maxp = max_packet(maxp);
 		buf1 |= maxp;
 		maxp *= multi;
 
@@ -1106,7 +1093,7 @@ iso_stream_init(
 		addr |= epnum << 8;
 		addr |= dev->devnum;
 		stream->ps.usecs = HS_USECS_ISO(maxp);
-		think_time = dev->tt ? dev->tt->think_time : 0;
+		think_time = dev->tt->think_time;
 		stream->ps.tt_usecs = NS_TO_US(think_time + usb_calc_bus_time(
 				dev->speed, is_input, 1, maxp));
 		hs_transfers = max(1u, (maxp + 187) / 188);
@@ -1550,7 +1537,7 @@ iso_stream_schedule(
 
 			/* no room in the schedule */
 			if (!done) {
-				ehci_dbg(ehci, "iso sched full %pK", urb);
+				ehci_dbg(ehci, "iso sched full %p", urb);
 				status = -ENOSPC;
 				goto fail;
 			}
@@ -1604,7 +1591,7 @@ iso_stream_schedule(
 
 	/* Is the schedule about to wrap around? */
 	if (unlikely(!empty && start < period)) {
-		ehci_dbg(ehci, "request %pK would overflow (%u-%u < %u mod %u)\n",
+		ehci_dbg(ehci, "request %p would overflow (%u-%u < %u mod %u)\n",
 				urb, stream->next_uframe, base, period, mod);
 		status = -EFBIG;
 		goto fail;
@@ -1633,7 +1620,7 @@ iso_stream_schedule(
 	/* How many uframes and packets do we need to skip? */
 	skip = (now2 - start + period - 1) & -period;
 	if (skip >= span) {		/* Entirely in the past? */
-		ehci_dbg(ehci, "iso underrun %pK (%u+%u < %u) [%u]\n",
+		ehci_dbg(ehci, "iso underrun %p (%u+%u < %u) [%u]\n",
 				urb, start + base, span - period, now2 + base,
 				base);
 
@@ -1660,7 +1647,7 @@ iso_stream_schedule(
  use_start:
 	/* Tried to schedule too far into the future? */
 	if (unlikely(start + span - period >= mod + wrap)) {
-		ehci_dbg(ehci, "request %pK would overflow (%u+%u >= %u)\n",
+		ehci_dbg(ehci, "request %p would overflow (%u+%u >= %u)\n",
 				urb, start, span - period, mod + wrap);
 		status = -EFBIG;
 		goto fail;
@@ -1848,7 +1835,6 @@ static bool itd_complete(struct ehci_hcd *ehci, struct ehci_itd *itd)
 	unsigned				uframe;
 	int					urb_index = -1;
 	struct ehci_iso_stream			*stream = itd->stream;
-	struct usb_device			*dev;
 	bool					retval = false;
 
 	/* for each uframe with a packet */
@@ -1899,7 +1885,6 @@ static bool itd_complete(struct ehci_hcd *ehci, struct ehci_itd *itd)
 	 */
 
 	/* give urb back to the driver; completion often (re)submits */
-	dev = urb->dev;
 	ehci_urb_done(ehci, urb, 0);
 	retval = true;
 	urb = NULL;
@@ -1956,7 +1941,7 @@ static int itd_submit(struct ehci_hcd *ehci, struct urb *urb,
 
 #ifdef EHCI_URB_TRACE
 	ehci_dbg(ehci,
-		"%s %s urb %p ep%d%s len %d, %d pkts %d uframes [%pK]\n",
+		"%s %s urb %p ep%d%s len %d, %d pkts %d uframes [%p]\n",
 		__func__, urb->dev->devpath, urb,
 		usb_pipeendpoint(urb->pipe),
 		usb_pipein(urb->pipe) ? "in" : "out",
@@ -2243,7 +2228,6 @@ static bool sitd_complete(struct ehci_hcd *ehci, struct ehci_sitd *sitd)
 	u32					t;
 	int					urb_index;
 	struct ehci_iso_stream			*stream = sitd->stream;
-	struct usb_device			*dev;
 	bool					retval = false;
 
 	urb_index = sitd->index;
@@ -2281,7 +2265,6 @@ static bool sitd_complete(struct ehci_hcd *ehci, struct ehci_sitd *sitd)
 	 */
 
 	/* give urb back to the driver; completion often (re)submits */
-	dev = urb->dev;
 	ehci_urb_done(ehci, urb, 0);
 	retval = true;
 	urb = NULL;
@@ -2336,8 +2319,8 @@ static int sitd_submit(struct ehci_hcd *ehci, struct urb *urb,
 	}
 
 #ifdef EHCI_URB_TRACE
-	ehci_dbg (ehci,
-		"submit %pK dev%s ep%d%s-iso len %d\n",
+	ehci_dbg(ehci,
+		"submit %p dev%s ep%d%s-iso len %d\n",
 		urb, urb->dev->devpath,
 		usb_pipeendpoint(urb->pipe),
 		usb_pipein(urb->pipe) ? "in" : "out",

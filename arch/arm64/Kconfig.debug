@@ -1,6 +1,4 @@
-menu "Kernel hacking"
-
-source "lib/Kconfig.debug"
+# SPDX-License-Identifier: GPL-2.0-only
 
 config ARM64_PTDUMP_CORE
 	def_bool n
@@ -84,9 +82,6 @@ config DEBUG_ALIGN_RODATA
 
 	  If in doubt, say N.
 
-config ARM64_STRICT_BREAK_BEFORE_MAKE
-	bool "Enforce strict break-before-make on page table updates "
-
 config DEBUG_EFI
 	depends on EFI && DEBUG_INFO
 	bool "UEFI debugging"
@@ -100,5 +95,3 @@ config ARM64_RELOC_TEST
 	tristate "Relocation testing module"
 
 source "drivers/hwtracing/coresight/Kconfig"
-
-endmenu

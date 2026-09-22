@@ -11,12 +11,16 @@ snd-usb-audio-objs := 	card.o \
 			mixer.o \
 			mixer_quirks.o \
 			mixer_scarlett.o \
+			mixer_scarlett_gen2.o \
 			mixer_us16x08.o \
 			pcm.o \
+			power.o \
 			proc.o \
 			quirks.o \
 			stream.o \
-			badd.o
+			validate.o
+
+snd-usb-audio-$(CONFIG_SND_USB_AUDIO_USE_MEDIA_CONTROLLER) += media.o
 
 snd-usbmidi-lib-objs := midi.o
 
@@ -29,4 +33,3 @@ obj-$(CONFIG_SND_USB_US122L) += snd-usbmidi-lib.o
 
 obj-$(CONFIG_SND) += misc/ usx2y/ caiaq/ 6fire/ hiface/ bcd2000/
 obj-$(CONFIG_SND_USB_LINE6)	+= line6/
-obj-$(CONFIG_SND_USB_AUDIO_QMI) += usb_audio_qmi_v01.o usb_audio_qmi_svc.o

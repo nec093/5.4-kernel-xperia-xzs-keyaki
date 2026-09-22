@@ -1,14 +1,10 @@
-/*
- * Register cache access API
- *
- * Copyright 2011 Wolfson Microelectronics plc
- *
- * Author: Dimitris Papastamos <dp@opensource.wolfsonmicro.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0
+//
+// Register cache access API
+//
+// Copyright 2011 Wolfson Microelectronics plc
+//
+// Author: Dimitris Papastamos <dp@opensource.wolfsonmicro.com>
 
 #include <linux/bsearch.h>
 #include <linux/device.h>
@@ -727,7 +723,7 @@ static int regcache_sync_block_raw_flush(struct regmap *map, const void **data,
 
 	map->cache_bypass = true;
 
-	ret = _regmap_raw_write(map, base, *data, count * val_bytes);
+	ret = _regmap_raw_write(map, base, *data, count * val_bytes, false);
 	if (ret)
 		dev_err(map->dev, "Unable to sync registers %#x-%#x. %d\n",
 			base, cur - map->reg_stride, ret);
@@ -736,53 +732,6 @@ static int regcache_sync_block_raw_flush(struct regmap *map, const void **data,
 
 	*data = NULL;
 
-	return ret;
-}
-
-static int regcache_sync_block_raw_multi_reg(struct regmap *map, void *block,
-					unsigned long *cache_present,
-					unsigned int block_base,
-					unsigned int start,
-					unsigned int end)
-{
-	unsigned int i, val;
-	unsigned int regtmp = 0;
-	int ret = 0;
-	struct reg_sequence *regs;
-	size_t num_regs = ((end - start) + 1);
-
-	regs = kcalloc(num_regs, sizeof(struct reg_sequence), GFP_KERNEL);
-	if (!regs)
-		return -ENOMEM;
-
-	num_regs = 0;
-	for (i = start; i < end; i++) {
-		regtmp = block_base + (i * map->reg_stride);
-
-		/* skip registers that are not defined/available */
-		if (!regcache_reg_present(cache_present, i))
-			continue;
-
-		val = regcache_get_val(map, block, i);
-
-		/* Is this the hardware default?  If so skip. */
-		ret = regcache_lookup_reg(map, regtmp);
-		if (ret >= 0 && val == map->reg_defaults[ret].def) {
-			continue;
-		} else {
-			regs[num_regs].reg = regtmp;
-			regs[num_regs].def = val;
-			regs[num_regs].delay_us = 0;
-			num_regs += 1;
-		}
-	}
-	ret = 0;
-	if (num_regs) {
-		dev_dbg(map->dev, "%s: start: 0x%x - end: 0x%x\n",
-			__func__, regs[0].reg, regs[num_regs-1].reg);
-		ret = _regmap_raw_multi_reg_write(map, regs, num_regs);
-	}
-	kfree(regs);
 	return ret;
 }
 
@@ -833,12 +782,7 @@ int regcache_sync_block(struct regmap *map, void *block,
 			unsigned int block_base, unsigned int start,
 			unsigned int end)
 {
-	if (regmap_can_raw_write(map) && map->can_multi_write)
-		return regcache_sync_block_raw_multi_reg(map, block,
-							 cache_present,
-							 block_base, start,
-							 end);
-	else if (regmap_can_raw_write(map) && !map->use_single_write)
+	if (regmap_can_raw_write(map) && !map->use_single_write)
 		return regcache_sync_block_raw(map, block, cache_present,
 					       block_base, start, end);
 	else

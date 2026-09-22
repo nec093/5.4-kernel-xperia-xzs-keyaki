@@ -59,7 +59,6 @@
 #define ARPHRD_HDLC	ARPHRD_CISCO
 #define ARPHRD_LAPB	516		/* LAPB				*/
 #define ARPHRD_DDCMP    517		/* Digital's DDCMP protocol     */
-#define ARPHRD_RAWIP	530		/* Raw IP			*/
 #define ARPHRD_RAWHDLC	518		/* Raw HDLC			*/
 #define ARPHRD_RAWIP    519		/* Raw IP                       */
 
@@ -115,18 +114,18 @@
 
 /* ARP ioctl request. */
 struct arpreq {
-  struct sockaddr	arp_pa;		/* protocol address		*/
-  struct sockaddr	arp_ha;		/* hardware address		*/
-  int			arp_flags;	/* flags			*/
-  struct sockaddr       arp_netmask;    /* netmask (only for proxy arps) */
-  char			arp_dev[16];
+	struct sockaddr	arp_pa;		/* protocol address		 */
+	struct sockaddr	arp_ha;		/* hardware address		 */
+	int		arp_flags;	/* flags			 */
+	struct sockaddr arp_netmask;    /* netmask (only for proxy arps) */
+	char		arp_dev[IFNAMSIZ];
 };
 
 struct arpreq_old {
-  struct sockaddr	arp_pa;		/* protocol address		*/
-  struct sockaddr	arp_ha;		/* hardware address		*/
-  int			arp_flags;	/* flags			*/
-  struct sockaddr       arp_netmask;    /* netmask (only for proxy arps) */
+	struct sockaddr	arp_pa;		/* protocol address		 */
+	struct sockaddr	arp_ha;		/* hardware address		 */
+	int		arp_flags;	/* flags			 */
+	struct sockaddr	arp_netmask;    /* netmask (only for proxy arps) */
 };
 
 /* ARP Flag values. */

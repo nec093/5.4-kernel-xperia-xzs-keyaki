@@ -114,7 +114,9 @@ struct atm_dev *atm_dev_register(const char *type, struct device *parent,
 
 	if (atm_proc_dev_register(dev) < 0) {
 		pr_err("atm_proc_dev_register failed for dev %s\n", type);
-		goto out_fail;
+		mutex_unlock(&atm_dev_mutex);
+		kfree(dev);
+		return NULL;
 	}
 
 	if (atm_register_sysfs(dev, parent) < 0) {
@@ -130,7 +132,7 @@ out:
 	return dev;
 
 out_fail:
-	kfree(dev);
+	put_device(&dev->class_dev);
 	dev = NULL;
 	goto out;
 }
@@ -148,11 +150,10 @@ void atm_dev_deregister(struct atm_dev *dev)
 	 */
 	mutex_lock(&atm_dev_mutex);
 	list_del(&dev->dev_list);
-	mutex_unlock(&atm_dev_mutex);
-
 	atm_dev_release_vccs(dev);
 	atm_unregister_sysfs(dev);
 	atm_proc_dev_deregister(dev);
+	mutex_unlock(&atm_dev_mutex);
 
 	atm_dev_put(dev);
 }
@@ -203,13 +204,9 @@ int atm_dev_ioctl(unsigned int cmd, void __user *arg, int compat)
 	int __user *sioc_len;
 	int __user *iobuf_len;
 
-#ifndef CONFIG_COMPAT
-	compat = 0; /* Just so the compiler _knows_ */
-#endif
-
 	switch (cmd) {
 	case ATM_GETNAMES:
-		if (compat) {
+		if (IS_ENABLED(CONFIG_COMPAT) && compat) {
 #ifdef CONFIG_COMPAT
 			struct compat_atm_iobuf __user *ciobuf = arg;
 			compat_uptr_t cbuf;
@@ -253,7 +250,7 @@ int atm_dev_ioctl(unsigned int cmd, void __user *arg, int compat)
 		break;
 	}
 
-	if (compat) {
+	if (IS_ENABLED(CONFIG_COMPAT) && compat) {
 #ifdef CONFIG_COMPAT
 		struct compat_atmif_sioc __user *csioc = arg;
 		compat_uptr_t carg;
@@ -417,7 +414,7 @@ int atm_dev_ioctl(unsigned int cmd, void __user *arg, int compat)
 		}
 		/* fall through */
 	default:
-		if (compat) {
+		if (IS_ENABLED(CONFIG_COMPAT) && compat) {
 #ifdef CONFIG_COMPAT
 			if (!dev->ops->compat_ioctl) {
 				error = -EINVAL;

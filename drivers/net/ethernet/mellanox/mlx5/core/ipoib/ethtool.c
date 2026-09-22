@@ -39,7 +39,7 @@ static void mlx5i_get_drvinfo(struct net_device *dev,
 	struct mlx5e_priv *priv = mlx5i_epriv(dev);
 
 	mlx5e_ethtool_get_drvinfo(priv, drvinfo);
-	strlcpy(drvinfo->driver, DRIVER_NAME "[ib_ipoib]",
+	strlcpy(drvinfo->driver, KBUILD_MODNAME "[ib_ipoib]",
 		sizeof(drvinfo->driver));
 }
 
@@ -249,4 +249,10 @@ const struct ethtool_ops mlx5i_ethtool_ops = {
 	.get_ts_info        = mlx5i_get_ts_info,
 	.get_link_ksettings = mlx5i_get_link_ksettings,
 	.get_link           = ethtool_op_get_link,
+};
+
+const struct ethtool_ops mlx5i_pkey_ethtool_ops = {
+	.get_drvinfo        = mlx5i_get_drvinfo,
+	.get_link           = ethtool_op_get_link,
+	.get_ts_info        = mlx5i_get_ts_info,
 };

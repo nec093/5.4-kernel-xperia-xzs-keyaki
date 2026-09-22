@@ -1,20 +1,8 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  */
 #ifndef _LINUX_SPMI_H
 #define _LINUX_SPMI_H
-
-#ifdef CONFIG_MSM_SPMI
-#include <linux/msm_spmi.h>
-#else
 
 #include <linux/types.h>
 #include <linux/device.h>
@@ -191,5 +179,4 @@ int spmi_command_sleep(struct spmi_device *sdev);
 int spmi_command_wakeup(struct spmi_device *sdev);
 int spmi_command_shutdown(struct spmi_device *sdev);
 
-#endif /* CONFIG_MSM_SPMI */
 #endif

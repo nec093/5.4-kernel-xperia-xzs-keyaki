@@ -1,12 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * include/net/l3mdev.h - L3 master device API
  * Copyright (c) 2015 Cumulus Networks
  * Copyright (c) 2015 David Ahern <dsa@cumulusnetworks.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 #ifndef _NET_L3MDEV_H_
 #define _NET_L3MDEV_H_
@@ -101,6 +97,17 @@ struct net_device *l3mdev_master_dev_rcu(const struct net_device *_dev)
 	return master;
 }
 
+int l3mdev_master_upper_ifindex_by_index_rcu(struct net *net, int ifindex);
+static inline
+int l3mdev_master_upper_ifindex_by_index(struct net *net, int ifindex)
+{
+	rcu_read_lock();
+	ifindex = l3mdev_master_upper_ifindex_by_index_rcu(net, ifindex);
+	rcu_read_unlock();
+
+	return ifindex;
+}
+
 u32 l3mdev_fib_table_rcu(const struct net_device *dev);
 u32 l3mdev_fib_table_by_index(struct net *net, int ifindex);
 static inline u32 l3mdev_fib_table(const struct net_device *dev)
@@ -172,10 +179,12 @@ struct sk_buff *l3mdev_l3_out(struct sock *sk, struct sk_buff *skb, u16 proto)
 	if (netif_is_l3_slave(dev)) {
 		struct net_device *master;
 
+		rcu_read_lock();
 		master = netdev_master_upper_dev_get_rcu(dev);
 		if (master && master->l3mdev_ops->l3mdev_l3_out)
 			skb = master->l3mdev_ops->l3mdev_l3_out(master, sk,
 								skb, proto);
+		rcu_read_unlock();
 	}
 
 	return skb;
@@ -204,6 +213,17 @@ static inline int l3mdev_master_ifindex(struct net_device *dev)
 }
 
 static inline int l3mdev_master_ifindex_by_index(struct net *net, int ifindex)
+{
+	return 0;
+}
+
+static inline
+int l3mdev_master_upper_ifindex_by_index_rcu(struct net *net, int ifindex)
+{
+	return 0;
+}
+static inline
+int l3mdev_master_upper_ifindex_by_index(struct net *net, int ifindex)
 {
 	return 0;
 }

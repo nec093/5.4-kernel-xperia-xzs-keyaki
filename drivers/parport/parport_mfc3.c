@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Low-level parallel port routines for the Multiface 3 card
  *
  * Author: Joerg Dorchain <joerg@dorchain.net>
@@ -324,7 +325,7 @@ static int __init parport_mfc3_init(void)
 		p->dev = &z->dev;
 
 		this_port[pias++] = p;
-		printk(KERN_INFO "%s: Multiface III port using irq\n", p->name);
+		pr_info("%s: Multiface III port using irq\n", p->name);
 		/* XXX: set operating mode */
 
 		p->private_data = (void *)piabase;

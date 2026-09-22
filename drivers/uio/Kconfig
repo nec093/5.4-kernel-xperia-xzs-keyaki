@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 menuconfig UIO
 	tristate "Userspace I/O drivers"
 	depends on MMU
@@ -154,13 +155,6 @@ config UIO_MF624
 	    git clone git://rtime.felk.cvut.cz/mf6xx.git
 
 	  If you compile this as a module, it will be called uio_mf624.
-
-config UIO_MSM_SHAREDMEM
-	bool "MSM shared memory driver"
-	default n
-	help
-	  Provides the clients with their respective alloted shared memory
-	  addresses which are used as transport buffer.
 
 config UIO_HV_GENERIC
 	tristate "Generic driver for Hyper-V VMBus"

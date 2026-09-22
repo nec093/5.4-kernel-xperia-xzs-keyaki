@@ -11,6 +11,7 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/device-mapper.h>
+#include <linux/kernel.h>
 
 #define DM_MSG_PREFIX "space map metadata"
 
@@ -111,7 +112,7 @@ static bool brb_empty(struct bop_ring_buffer *brb)
 static unsigned brb_next(struct bop_ring_buffer *brb, unsigned old)
 {
 	unsigned r = old + 1;
-	return (r >= (sizeof(brb->bops) / sizeof(*brb->bops))) ? 0 : r;
+	return r >= ARRAY_SIZE(brb->bops) ? 0 : r;
 }
 
 static int brb_push(struct bop_ring_buffer *brb,
@@ -274,7 +275,7 @@ static void sm_metadata_destroy(struct dm_space_map *sm)
 {
 	struct sm_metadata *smm = container_of(sm, struct sm_metadata, sm);
 
-	kfree(smm);
+	kvfree(smm);
 }
 
 static int sm_metadata_get_nr_blocks(struct dm_space_map *sm, dm_block_t *count)
@@ -758,7 +759,7 @@ struct dm_space_map *dm_sm_metadata_init(void)
 {
 	struct sm_metadata *smm;
 
-	smm = kmalloc(sizeof(*smm), GFP_KERNEL);
+	smm = kvmalloc(sizeof(*smm), GFP_KERNEL);
 	if (!smm)
 		return ERR_PTR(-ENOMEM);
 
